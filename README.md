@@ -22,7 +22,7 @@ The browser profile is defined by `model-manifest.json`:
 - token embeddings: FP16
 - vision encoder: FP16
 - merged decoder: Q4F16
-- estimated initial transfer: approximately 544 MiB plus runtime and configuration assets
+- verified compressed initial transfer: approximately 573 MB
 
 Artifact sizes are currently estimates and integrity verification remains pending. Release automation should populate exact byte lengths and SHA-256 values before changing `integrity_status` to `verified`.
 

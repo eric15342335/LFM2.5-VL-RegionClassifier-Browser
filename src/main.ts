@@ -1,6 +1,16 @@
 import "./styles/app.css";
+import "./styles/ui-overrides.css";
 import { INFERENCE_CONFIG } from "./config";
+import { estimateDownloadProgress } from "./download-progress";
 import { BrowserInferenceEngine } from "./engines/browser-engine";
+import {
+  canvasPointFromClient,
+  clamp,
+  isUsableSelection,
+  selectionEnd,
+  normalizedSelection as toNormalizedSelection,
+  type Point,
+} from "./selection-geometry";
 import type {
   BrowserCapability,
   ClassificationResult,
@@ -9,13 +19,36 @@ import type {
   ProgressEvent,
   SelectionShape,
 } from "./types";
+import {
+  deriveUiState,
+  normalizeWorkerStage,
+  primaryActionFor,
+  progressModeForWorkerStage,
+  stagesFor,
+  type Operation,
+  type Outcome,
+  type ProgressMode,
+  type StageStatus,
+} from "./ui-state";
 
-type Point = { x: number; y: number };
 type LatestResult = ClassificationResult & {
   browser: { round_trip_ms: number };
 };
 type FactEntry = readonly [name: string, value: unknown];
 type ResultRow = readonly [name: string, value: unknown, raw?: boolean];
+type UiSeverity = "info" | "error";
+
+type UiModel = {
+  capability: "probing" | "available" | "unavailable";
+  operation: Operation;
+  outcome: Outcome;
+  progressMode: ProgressMode;
+  stage: string | null;
+  stageStatus: StageStatus;
+  message: string;
+  severity: UiSeverity;
+  technicalError: string | null;
+};
 
 function requiredElement<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -27,28 +60,37 @@ const element = {
   file: requiredElement<HTMLInputElement>("file"),
   fileName: requiredElement<HTMLElement>("fileName"),
   shape: requiredElement<HTMLSelectElement>("shape"),
-  loadModel: requiredElement<HTMLButtonElement>("loadModel"),
-  executionBadge: requiredElement<HTMLElement>("executionBadge"),
   browserModelStatus: requiredElement<HTMLElement>("browserModelStatus"),
   modelStorageEstimate: requiredElement<HTMLElement>("modelStorageEstimate"),
-  retry: requiredElement<HTMLButtonElement>("retry"),
+  modelDownloadProgress: requiredElement<HTMLElement>("modelDownloadProgress"),
+  modelDownloadPercent: requiredElement<HTMLOutputElement>("modelDownloadPercent"),
+  modelDownloadBar: requiredElement<HTMLProgressElement>("modelDownloadBar"),
+  modelDownloadMeta: requiredElement<HTMLElement>("modelDownloadMeta"),
+  primaryAction: requiredElement<HTMLButtonElement>("primaryAction"),
+  actionHint: requiredElement<HTMLElement>("actionHint"),
   cancel: requiredElement<HTMLButtonElement>("cancel"),
   capabilityPill: requiredElement<HTMLElement>("capabilityPill"),
   capabilityText: requiredElement<HTMLElement>("capabilityText"),
   elapsed: requiredElement<HTMLOutputElement>("elapsed"),
   status: requiredElement<HTMLElement>("status"),
-  progressTrack: requiredElement<HTMLProgressElement>("progressTrack"),
-  pipeline: requiredElement<HTMLOListElement>("pipeline"),
+  statusAnnouncement: requiredElement<HTMLElement>("statusAnnouncement"),
+  actionFeedback: requiredElement<HTMLElement>("actionFeedback"),
+  technicalDetails: requiredElement<HTMLDetailsElement>("technicalDetails"),
+  technicalError: requiredElement<HTMLElement>("technicalError"),
+  resultEmpty: requiredElement<HTMLElement>("resultEmpty"),
+  resultContent: requiredElement<HTMLElement>("resultContent"),
   label: requiredElement<HTMLElement>("label"),
   probability: requiredElement<HTMLElement>("probability"),
   coverage: requiredElement<HTMLElement>("coverage"),
   totalTime: requiredElement<HTMLElement>("totalTime"),
-  inferenceTime: requiredElement<HTMLElement>("inferenceTime"),
-  preprocessTime: requiredElement<HTMLElement>("preprocessTime"),
   imageDimensions: requiredElement<HTMLElement>("imageDimensions"),
   canvasShell: requiredElement<HTMLElement>("canvasShell"),
   canvas: requiredElement<HTMLCanvasElement>("canvas"),
   canvasPlaceholder: requiredElement<HTMLElement>("canvasPlaceholder"),
+  selectionLegend: requiredElement<HTMLElement>("selectionLegend"),
+  cropLegend: requiredElement<HTMLElement>("cropLegend"),
+  coordinatePanel: requiredElement<HTMLDetailsElement>("coordinatePanel"),
+  cropPreviewWrap: requiredElement<HTMLDetailsElement>("cropPreviewWrap"),
   x1: requiredElement<HTMLInputElement>("x1"),
   y1: requiredElement<HTMLInputElement>("y1"),
   x2: requiredElement<HTMLInputElement>("x2"),
@@ -59,7 +101,6 @@ const element = {
   deviceBadge: requiredElement<HTMLElement>("deviceBadge"),
   hardwareSummary: requiredElement<HTMLElement>("hardwareSummary"),
   hardwareFacts: requiredElement<HTMLDListElement>("hardwareFacts"),
-  timingBars: requiredElement<HTMLElement>("timingBars"),
   engineFacts: requiredElement<HTMLDListElement>("engineFacts"),
   eventLog: requiredElement<HTMLOListElement>("eventLog"),
   clearEvents: requiredElement<HTMLButtonElement>("clearEvents"),
@@ -78,9 +119,8 @@ function requiredCanvasContext(canvas: HTMLCanvasElement): CanvasRenderingContex
 
 const context = requiredCanvasContext(element.canvas);
 const cropContext = requiredCanvasContext(element.cropPreview);
-
-const stageOrder = ["accepted", "crop", "inference", "complete"] as const;
 const coordinateKeys = ["x1", "y1", "x2", "y2"] as const;
+const engine = new BrowserInferenceEngine(INFERENCE_CONFIG);
 
 let bitmap: ImageBitmap | null = null;
 let start: Point | null = null;
@@ -91,23 +131,59 @@ let capabilityData: BrowserCapability | null = null;
 let controller: AbortController | null = null;
 let imageController: AbortController | null = null;
 let imageDescriptor: ImageDescriptor | null = null;
-const engine = new BrowserInferenceEngine(INFERENCE_CONFIG);
 let imageLoadSequence = 0;
 let requestSequence = 0;
-let requestStarted = 0;
+let operationStarted = 0;
 let timer: number | null = null;
 let eventHistory: ProgressEvent[] = [];
+const eventItems = new Map<string, HTMLLIElement>();
+let lastAnnouncedState = "";
+
+const ui: UiModel = {
+  capability: "probing",
+  operation: "idle",
+  outcome: "none",
+  progressMode: "idle",
+  stage: null,
+  stageStatus: "idle",
+  message: "Checking browser support...",
+  severity: "info",
+  technicalError: null,
+};
+
+function currentUiState() {
+  return deriveUiState({
+    capability: ui.capability,
+    operation: ui.operation,
+    outcome: ui.outcome,
+    modelPrepared: engine.isPrepared(),
+    hasImage: Boolean(bitmap && imageDescriptor),
+    hasSelection: hasUsableSelection(),
+  });
+}
+
+function currentPrimaryAction(state = currentUiState()) {
+  return primaryActionFor(
+    state,
+    formatDownloadBytes(INFERENCE_CONFIG.model.estimated_download_bytes),
+    ui.operation === "image-loading",
+    ui.capability === "available"
+  );
+}
+
+function resetSelectionWorkflow(): void {
+  ui.outcome = "none";
+  ui.progressMode = "idle";
+  ui.stage = null;
+  ui.stageStatus = "idle";
+}
 
 function setText(target: Node, value: unknown): void {
   target.textContent = String(value);
 }
 
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.min(maximum, Math.max(minimum, value));
-}
-
 function formatMilliseconds(value: unknown): string {
-  if (!Number.isFinite(Number(value))) return "—";
+  if (!Number.isFinite(Number(value))) return "Not available";
   const milliseconds = Number(value);
   return milliseconds >= 1000
     ? `${(milliseconds / 1000).toFixed(2)} s`
@@ -115,7 +191,7 @@ function formatMilliseconds(value: unknown): string {
 }
 
 function formatBytes(value: unknown): string {
-  if (!Number.isFinite(Number(value))) return "—";
+  if (!Number.isFinite(Number(value))) return "Not available";
   const bytes = Number(value);
   const units = ["B", "KiB", "MiB", "GiB", "TiB"];
   let size = bytes;
@@ -128,60 +204,76 @@ function formatBytes(value: unknown): string {
   return `${size.toFixed(digits)} ${units[unit]}`;
 }
 
+function formatDownloadBytes(value: unknown): string {
+  if (!Number.isFinite(Number(value))) return "Not available";
+  const megabytes = Number(value) / 1_000_000;
+  return `${megabytes.toFixed(megabytes >= 100 ? 0 : 1)} MB`;
+}
+
+function formatRemainingTime(seconds: number | null): string {
+  if (seconds === null || !Number.isFinite(seconds)) return "Calculating remaining time…";
+  if (seconds < 60) return `About ${Math.max(1, Math.ceil(seconds))} seconds remaining`;
+  return `About ${Math.ceil(seconds / 60)} minutes remaining`;
+}
+
 function formatValue(value: unknown): string {
-  if (value === null || value === undefined || value === "") return "—";
+  if (value === null || value === undefined || value === "") return "Not available";
   if (Array.isArray(value)) return value.join(", ");
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
 
-function point(event: PointerEvent): Point {
-  const bounds = element.canvas.getBoundingClientRect();
-  return {
-    x: clamp(
-      ((event.clientX - bounds.left) * element.canvas.width) / bounds.width,
-      0,
-      element.canvas.width
-    ),
-    y: clamp(
-      ((event.clientY - bounds.top) * element.canvas.height) / bounds.height,
-      0,
-      element.canvas.height
-    ),
-  };
+function errorDetails(error: unknown): string {
+  if (error instanceof Error)
+    return error.stack ? `${error.name}: ${error.message}\n${error.stack}` : error.message;
+  return String(error);
 }
 
-function circleEnd(first: Point, last: Point): Point {
-  const side = Math.max(Math.abs(last.x - first.x), Math.abs(last.y - first.y));
-  return {
-    x: first.x + Math.sign(last.x - first.x || 1) * side,
-    y: first.y + Math.sign(last.y - first.y || 1) * side,
-  };
+function point(event: PointerEvent): Point {
+  const bounds = element.canvas.getBoundingClientRect();
+  return canvasPointFromClient(event.clientX, event.clientY, bounds, element.canvas);
 }
 
 function finalPoint(): Point {
   if (!start || !end) throw new Error("A selection has not been drawn");
-  return element.shape.value === "circle" ? circleEnd(start, end) : end;
+  return selectionEnd(start, end, element.shape.value as SelectionShape);
 }
 
 function normalizedSelection(): NormalizedSelection {
   if (!start) throw new Error("A selection has not been drawn");
-  const first = start;
-  const last = finalPoint();
-  return {
-    x1: clamp(Math.min(first.x, last.x) / element.canvas.width, 0, 1),
-    y1: clamp(Math.min(first.y, last.y) / element.canvas.height, 0, 1),
-    x2: clamp(Math.max(first.x, last.x) / element.canvas.width, 0, 1),
-    y2: clamp(Math.max(first.y, last.y) / element.canvas.height, 0, 1),
-  };
+  if (!end) throw new Error("A selection has not been drawn");
+  return toNormalizedSelection(start, end, element.shape.value as SelectionShape, element.canvas);
+}
+
+function hasUsableSelection(): boolean {
+  if (!start || !end || !bitmap) return false;
+  return isUsableSelection(normalizedSelection());
 }
 
 function syncCoordinateInputs(): void {
   if (!start || !end) return;
   const selection = normalizedSelection();
-  for (const key of coordinateKeys) {
-    element[key].value = (selection[key] * 100).toFixed(1);
+  for (const key of coordinateKeys) element[key].value = (selection[key] * 100).toFixed(1);
+}
+
+function classifyCompletedSelection(): void {
+  if (!hasUsableSelection()) {
+    ui.message = "Selection is too small. Expand it and try again.";
+    ui.severity = "error";
+    ui.technicalError = null;
+    draw();
+    renderUi();
+    return;
   }
+  if (!engine.isPrepared()) {
+    ui.message = "Selection ready. Load the local model to classify it.";
+    ui.severity = "info";
+    ui.technicalError = null;
+    draw();
+    renderUi();
+    return;
+  }
+  void classify();
 }
 
 function applyCoordinateInputs(): void {
@@ -200,9 +292,9 @@ function applyCoordinateInputs(): void {
     x: values.x2 * element.canvas.width,
     y: values.y2 * element.canvas.height,
   };
-  latest = null;
-  draw();
-  classify();
+  clearStaleResult();
+  resetSelectionWorkflow();
+  classifyCompletedSelection();
 }
 
 function strokeNormalizedBox(
@@ -253,14 +345,12 @@ function draw(): void {
   if (!bitmap) return;
   context.clearRect(0, 0, element.canvas.width, element.canvas.height);
   context.drawImage(bitmap, 0, 0, element.canvas.width, element.canvas.height);
-  if (latest?.crop?.cropBox) {
-    strokeNormalizedBox(latest.crop.cropBox, "#4ade80", 3, true);
-  }
+  if (latest?.crop?.cropBox) strokeNormalizedBox(latest.crop.cropBox, "#4ade80", 3, true);
   drawSelection();
 }
 
 function drawCropPreview(result: ClassificationResult): void {
-  if (!bitmap || !result?.crop?.cropBox) return;
+  if (!bitmap || !result.crop.cropBox) return;
   const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = result.crop.cropBox;
   const sourceX = x1 * bitmap.width;
   const sourceY = y1 * bitmap.height;
@@ -284,55 +374,80 @@ function drawCropPreview(result: ClassificationResult): void {
   );
   setText(
     element.cropDimensions,
-    `${result.crop.cropSizeBeforeResize.join(" × ")} → ${result.crop.modelImageSize.join(" × ")}`
+    `${result.crop.cropSizeBeforeResize.join(" x ")} to ${result.crop.modelImageSize.join(" x ")}`
+  );
+  element.cropPreview.setAttribute(
+    "aria-label",
+    `Model crop preview, ${result.crop.cropSizeBeforeResize.join(" by ")} resized to ${result.crop.modelImageSize.join(" by ")}`
   );
 }
 
-function setProgress(stage: string, progress: number, message: string): void {
-  const currentIndex = stageOrder.indexOf(stage as (typeof stageOrder)[number]);
-  const bounded = clamp(Number(progress) || 0, 0, 100);
-  element.progressTrack.value = bounded;
-  if (message) setText(element.status, message);
-
-  for (const item of element.pipeline.querySelectorAll("li")) {
-    const index = stageOrder.indexOf(item.dataset.stage as (typeof stageOrder)[number]);
-    item.classList.toggle("done", index < currentIndex || stage === "complete");
-    item.classList.toggle("active", index === currentIndex && stage !== "complete");
-  }
-}
-
-function resetProgress(): void {
-  setProgress("", 0, "Choose an image, then draw around one object.");
-  element.status.classList.remove("error");
-  for (const item of element.pipeline.querySelectorAll("li")) {
-    item.classList.remove("done", "active");
-  }
+function clearTimer(): void {
+  if (timer !== null) window.clearInterval(timer);
+  timer = null;
+  operationStarted = 0;
   setText(element.elapsed, "0 ms");
 }
 
 function startTimer(): void {
-  stopTimer();
-  requestStarted = performance.now();
+  if (timer !== null) window.clearInterval(timer);
+  operationStarted = performance.now();
   timer = window.setInterval(() => {
-    setText(element.elapsed, formatMilliseconds(performance.now() - requestStarted));
+    setText(element.elapsed, formatMilliseconds(performance.now() - operationStarted));
   }, 100);
 }
 
-function stopTimer(): void {
-  if (timer !== null) {
-    window.clearInterval(timer);
-    timer = null;
-  }
+function elapsedTime(): number {
+  return operationStarted ? performance.now() - operationStarted : 0;
 }
 
-function setBusy(busy: boolean): void {
-  element.retry.disabled =
-    busy || !engine.isPrepared() || !bitmap || !imageDescriptor || !start || !end;
-  element.cancel.disabled = !busy;
-  element.file.disabled = busy;
-  element.shape.disabled = busy;
-  element.applyCoordinates.disabled = busy || !bitmap;
-  element.canvas.classList.toggle("busy", busy);
+function finishTimer(value = elapsedTime()): void {
+  if (timer !== null) window.clearInterval(timer);
+  timer = null;
+  operationStarted = 0;
+  setText(element.elapsed, formatMilliseconds(value));
+}
+
+function updateProgress(event: ProgressEvent): void {
+  let mode = progressModeForWorkerStage(event.stage);
+  let stage: string | null;
+  if (event.stage === "recovery") {
+    mode = "model";
+    stage = "probe";
+  } else {
+    stage = normalizeWorkerStage(mode, event.stage);
+  }
+  if (mode === "idle" || !stage) return;
+
+  ui.progressMode = mode;
+  ui.stage = stage;
+  ui.stageStatus = "active";
+  ui.message = event.message;
+  ui.severity = "info";
+  if (mode === "model" && stage === "download") updateModelDownloadProgress(event);
+  renderUi();
+}
+
+function resetModelDownloadProgress(): void {
+  element.modelDownloadBar.value = 0;
+  setText(element.modelDownloadPercent, "0%");
+  setText(
+    element.modelDownloadMeta,
+    `0 MB of ${formatDownloadBytes(INFERENCE_CONFIG.model.estimated_download_bytes)} · Preparing download…`
+  );
+}
+
+function updateModelDownloadProgress(event: ProgressEvent): void {
+  const downloadedBytes = Number(event.detail?.downloaded_bytes);
+  const predictedBytes = Number(event.detail?.predicted_bytes);
+  if (!Number.isFinite(downloadedBytes) || !Number.isFinite(predictedBytes)) return;
+  const progress = estimateDownloadProgress(downloadedBytes, predictedBytes, event.elapsedMs);
+  element.modelDownloadBar.value = progress.percentage;
+  setText(element.modelDownloadPercent, `${Math.floor(progress.percentage)}%`);
+  setText(
+    element.modelDownloadMeta,
+    `${formatDownloadBytes(progress.downloadedBytes)} of ${formatDownloadBytes(progress.predictedBytes)} · ${formatRemainingTime(progress.remainingSeconds)}`
+  );
 }
 
 function appendFact(fragment: DocumentFragment, name: string, value: unknown): void {
@@ -355,8 +470,7 @@ function renderFacts(target: HTMLElement, entries: readonly FactEntry[]): void {
 function renderBrowserCapability(capability: BrowserCapability): void {
   const adapter = capability.adapterInfo ?? {};
   const storage = capability.storage;
-  const status = capability.supported ? "WEBGPU" : "UNAVAILABLE";
-  setText(element.deviceBadge, status);
+  setText(element.deviceBadge, capability.supported ? "WEBGPU" : "UNAVAILABLE");
 
   const adapterName = formatValue(
     adapter.description ?? adapter.device ?? adapter.architecture ?? "WebGPU adapter"
@@ -367,7 +481,7 @@ function renderBrowserCapability(capability: BrowserCapability): void {
   setText(
     element.hardwareSummary,
     capability.supported
-      ? `${adapterName} · ${storageSummary}`
+      ? `${adapterName} | ${storageSummary}`
       : capability.reason || "Browser WebGPU capability check failed"
   );
 
@@ -382,7 +496,7 @@ function renderBrowserCapability(capability: BrowserCapability): void {
     ["Description", adapter.description],
     ["Storage quota", storage?.quota ? formatBytes(storage.quota) : null],
     ["Storage used", storage?.usage ? formatBytes(storage.usage) : null],
-    ["Model headroom", storage?.required ? formatBytes(storage.required) : null],
+    ["Model storage requirement", storage?.required ? formatBytes(storage.required) : null],
   ]);
 }
 
@@ -398,40 +512,9 @@ function renderEngine(): void {
     ["Image side", INFERENCE_CONFIG.imageSide],
     ["Resampling", INFERENCE_CONFIG.resampling],
     ["Inference timeout", `${INFERENCE_CONFIG.inferenceTimeoutSeconds} s`],
-    ["Estimated download", formatBytes(model.estimated_download_bytes)],
+    ["Estimated download", formatDownloadBytes(model.estimated_download_bytes)],
     ["License", model.license],
   ]);
-}
-
-function renderTimings(performanceData: ClassificationResult["performance"]): void {
-  const entries: Array<[string, number]> = [
-    ["Preprocess", performanceData.preprocessMs],
-    ["WebGPU inference", performanceData.webgpuInferenceMs],
-  ].filter((entry): entry is [string, number] => Number.isFinite(entry[1]));
-
-  if (!entries.length) return;
-  const total = Math.max(Number(performanceData.totalMs) || 0, 1);
-  const fragment = document.createDocumentFragment();
-  for (const [name, value] of entries) {
-    const row = document.createElement("div");
-    row.className = "timing-row";
-    const header = document.createElement("div");
-    header.className = "timing-label";
-    const label = document.createElement("span");
-    const duration = document.createElement("span");
-    setText(label, name);
-    setText(duration, formatMilliseconds(value));
-    header.append(label, duration);
-
-    const track = document.createElement("div");
-    track.className = "timing-track";
-    const bar = document.createElement("span");
-    bar.style.width = `${clamp((Number(value) / total) * 100, 1.5, 100)}%`;
-    track.append(bar);
-    row.append(header, track);
-    fragment.append(row);
-  }
-  element.timingBars.replaceChildren(fragment);
 }
 
 function renderRows(entries: readonly ResultRow[]): void {
@@ -442,7 +525,10 @@ function renderRows(entries: readonly ResultRow[]): void {
     const cell = document.createElement("td");
     key.scope = "row";
     setText(key, name);
-    setText(cell, typeof value === "string" ? value : JSON.stringify(value, null, 2));
+    setText(
+      cell,
+      typeof value === "string" ? value : (JSON.stringify(value, null, 2) ?? "Not available")
+    );
     if (raw) cell.className = "raw-cell";
     row.append(key, cell);
     fragment.append(row);
@@ -483,12 +569,11 @@ function renderJson(target: HTMLElement, value: unknown): void {
   target.replaceChildren(code);
 }
 
-function render(result: ClassificationResult, roundTrip: number): void {
+function renderResult(result: ClassificationResult, roundTrip: number): void {
   latest = {
     ...result,
     browser: { round_trip_ms: Number(roundTrip.toFixed(3)) },
   };
-  setText(element.elapsed, formatMilliseconds(roundTrip));
   const probability = result.tokenProbability;
   setText(element.label, result.label);
   setText(
@@ -499,15 +584,11 @@ function render(result: ClassificationResult, roundTrip: number): void {
   );
   setText(element.coverage, `${(Number(result.crop.selectedFractionOfCrop) * 100).toFixed(1)}%`);
   setText(element.totalTime, formatMilliseconds(result.performance.totalMs));
-  setText(element.inferenceTime, formatMilliseconds(result.performance.webgpuInferenceMs));
-  setText(element.preprocessTime, formatMilliseconds(result.performance.preprocessMs));
-
-  renderTimings(result.performance);
   renderRows([
     ["Cleaned label", result.label],
     ["Raw output", result.generation.rawOutput, true],
     ["Finish reason", result.generation.finishReason],
-    ["Mean token probability", result.tokenProbability],
+    ["Token confidence", result.tokenProbability],
     ["Usage", result.generation.usage, true],
     ["Token logprobs", result.generation.tokenLogprobs, true],
     ["Engine timings", result.generation.engineTimings, true],
@@ -524,19 +605,58 @@ function render(result: ClassificationResult, roundTrip: number): void {
   element.copyDebug.disabled = false;
 }
 
+function resetResultPresentation(): void {
+  setText(element.label, "Not available");
+  setText(element.probability, "Not available");
+  setText(element.coverage, "Not available");
+  setText(element.totalTime, "Not available");
+  setText(element.cropDimensions, "Not available");
+  element.cropPreview.width = 1;
+  element.cropPreview.height = 1;
+  element.cropPreviewWrap.open = false;
+  cropContext.clearRect(0, 0, 1, 1);
+  renderRows([["State", "No result yet."]]);
+  renderJson(element.rawResult, null);
+  element.copyResult.disabled = true;
+  element.copyDebug.disabled = eventHistory.length === 0;
+}
+
+function clearStaleResult(): void {
+  latest = null;
+  resetResultPresentation();
+  draw();
+}
+
 function clearEventLog(): void {
   eventHistory = [];
+  eventItems.clear();
   const empty = document.createElement("li");
   empty.className = "empty-copy";
   setText(empty, "No request events yet.");
   element.eventLog.replaceChildren(empty);
+  element.clearEvents.disabled = true;
+  element.copyDebug.disabled = latest === null;
 }
 
 function addEvent(event: ProgressEvent): void {
-  if (eventHistory.length === 0) element.eventLog.replaceChildren();
   eventHistory.push(event);
+  const key = event.stage || event.event;
+  let item = eventItems.get(key);
 
-  const item = document.createElement("li");
+  if (!item) {
+    if (eventItems.size === 0) element.eventLog.replaceChildren();
+    item = document.createElement("li");
+    item.dataset.eventKey = key;
+    eventItems.set(key, item);
+    element.eventLog.append(item);
+  }
+
+  element.clearEvents.disabled = false;
+  element.copyDebug.disabled = false;
+  renderEventItem(item, event);
+}
+
+function renderEventItem(item: HTMLLIElement, event: ProgressEvent): void {
   const heading = document.createElement("div");
   heading.className = "event-heading";
   const stage = document.createElement("strong");
@@ -547,60 +667,191 @@ function addEvent(event: ProgressEvent): void {
 
   const message = document.createElement("p");
   setText(message, event.message || "");
-  item.append(heading, message);
+  item.replaceChildren(heading, message);
 
   if (event.detail && Object.keys(event.detail).length) {
     const details = document.createElement("details");
     const summary = document.createElement("summary");
     const code = document.createElement("code");
-    setText(summary, "Details");
+    setText(summary, "View metadata");
     setText(code, JSON.stringify(event.detail, null, 2));
     details.append(summary, code);
     item.append(details);
   }
-  element.eventLog.append(item);
 }
 
-function cancelActiveRequest(): void {
+function runtimeHint(state: ReturnType<typeof deriveUiState>): string {
+  const modelSize = formatDownloadBytes(INFERENCE_CONFIG.model.estimated_download_bytes);
+  switch (state) {
+    case "probing":
+      return "Checking whether this browser can run the model locally.";
+    case "model-required":
+      return `The ${modelSize} model runs locally in this browser. Images remain on this device.`;
+    case "model-loading":
+      return "Downloading, compiling, and warming up the local model.";
+    case "image-required":
+      return "Choose an image to begin.";
+    case "selection-required":
+      return "Draw around one object on the image, or use the coordinate controls.";
+    case "ready":
+      return "Review the selection, then classify it locally.";
+    case "classifying":
+      return "The selected crop is being classified in this browser.";
+    case "success":
+      return "Token confidence reflects generated-token probabilities; it is not a calibrated correctness score.";
+    case "model-error":
+      return ui.capability === "unavailable"
+        ? "This browser cannot initialize the required local WebGPU runtime."
+        : "You can retry the local model load. Technical details remain available below the status.";
+    case "inference-error":
+      return "Try the selection again. Technical details remain available below the status.";
+    case "cancelled":
+      return "The classification was cancelled. Adjust the selection or run it again.";
+  }
+}
+
+function renderRuntimeStatus(state: ReturnType<typeof deriveUiState>): void {
+  let pillText = "Checking WebGPU";
+  let pillClass = "capability-pill";
+  let modelStatus = "Checking browser capability...";
+  if (ui.capability === "unavailable") {
+    pillText = "WebGPU unavailable";
+    pillClass += " error";
+    modelStatus = "WebGPU unavailable in this browser";
+  } else if (ui.capability === "available" && ui.operation === "model-loading") {
+    pillText = "Model loading";
+    modelStatus = "Loading in this browser";
+  } else if (ui.capability === "available" && engine.isPrepared()) {
+    pillText = "Model ready";
+    pillClass += " ok";
+    modelStatus = "Ready in this browser session";
+  } else if (ui.capability === "available") {
+    pillText = "WebGPU ready";
+    modelStatus = "Run locally in this browser";
+  }
+  if (state === "model-error" && ui.capability === "available") {
+    modelStatus = ui.message.startsWith("The model loaded")
+      ? "Processor setup failed"
+      : "Model load failed";
+  }
+  element.capabilityPill.className = pillClass;
+  setText(element.capabilityText, pillText);
+  setText(element.browserModelStatus, modelStatus);
+}
+
+function renderUi(): void {
+  const state = currentUiState();
+  const busy = ui.operation !== "idle";
+  const action = currentPrimaryAction(state);
+  setText(element.primaryAction, action.label);
+  element.primaryAction.disabled = !action.enabled;
+  element.cancel.hidden = false;
+  element.cancel.classList.toggle("is-reserved-hidden", ui.operation !== "classifying");
+  element.cancel.setAttribute("aria-hidden", String(ui.operation !== "classifying"));
+  element.cancel.disabled = ui.operation !== "classifying";
+  element.file.disabled = busy;
+  element.shape.disabled = busy;
+  element.applyCoordinates.disabled = busy || !bitmap;
+  element.canvas.classList.toggle("busy", busy);
+
+  setText(element.status, ui.message);
+  element.status.classList.toggle("error", ui.severity === "error");
+  const announcementKey = `${state}:${ui.severity}`;
+  if (announcementKey !== lastAnnouncedState) {
+    setText(element.statusAnnouncement, ui.message);
+    lastAnnouncedState = announcementKey;
+  }
+  element.technicalDetails.hidden = !ui.technicalError;
+  if (ui.technicalError) setText(element.technicalError, ui.technicalError);
+
+  element.resultContent.hidden = latest === null;
+  element.resultEmpty.hidden = latest !== null;
+  const hasImage = Boolean(bitmap && imageDescriptor);
+  element.selectionLegend.hidden = !hasImage;
+  element.cropLegend.hidden = latest === null;
+  element.coordinatePanel.hidden = !hasImage;
+  element.cropPreviewWrap.hidden = latest === null;
+  element.clearEvents.disabled = eventHistory.length === 0;
+  element.copyDebug.disabled = latest === null && eventHistory.length === 0;
+  element.modelDownloadProgress.hidden = ui.operation !== "model-loading";
+  renderRuntimeStatus(state);
+  setText(element.actionHint, runtimeHint(state));
+}
+
+function failOperation(
+  kind: Extract<Outcome, "model-error" | "inference-error">,
+  error: unknown
+): void {
+  const mode =
+    kind === "model-error" ? "model" : ui.progressMode === "idle" ? "inference" : ui.progressMode;
+  if (ui.stage === null) ui.stage = stagesFor(mode)[0]?.id ?? null;
+  ui.progressMode = mode;
+  ui.stageStatus = "failed";
+  ui.operation = "idle";
+  ui.outcome = kind;
+  const processorFailure =
+    error instanceof Error &&
+    (error.name === "ProcessorConfigurationError" || error.name === "MultimodalInputBudgetError");
+  ui.message = processorFailure
+    ? "The model loaded, but the local processor could not prepare an input within its token budget."
+    : kind === "model-error"
+      ? "The model could not be loaded. The browser runtime could not initialize this model."
+      : "The selection could not be classified. Try again.";
+  ui.severity = "error";
+  ui.technicalError = errorDetails(error);
+  finishTimer();
+  addEvent({
+    event: "error",
+    stage: ui.stage ?? "error",
+    message: ui.message,
+    elapsedMs: 0,
+    progress: 0,
+    detail: { error: ui.technicalError },
+  });
+  renderUi();
+  if (kind === "model-error") window.setTimeout(() => element.primaryAction.focus(), 0);
+}
+
+function cancelClassification(): void {
+  if (ui.operation !== "classifying") return;
+  ui.message = "Cancelling classification...";
+  ui.severity = "info";
+  renderUi();
   controller?.abort();
-  imageController?.abort();
   engine.cancel();
 }
 
-function renderEngineState(): void {
-  element.executionBadge.className = "badge execution browser";
-  setText(element.executionBadge, engine.isPrepared() ? "Browser WebGPU ready" : "Browser WebGPU");
-  setText(
-    element.browserModelStatus,
-    engine.isPrepared()
-      ? "Downloaded, compiled, and warmed up"
-      : "Not loaded in this browser session"
-  );
-}
-
 async function classify(): Promise<void> {
-  if (!imageDescriptor || !start || !end) return;
-  const selection = normalizedSelection();
-  if (selection.x2 - selection.x1 < 0.01 || selection.y2 - selection.y1 < 0.01) {
-    element.status.classList.add("error");
-    setText(element.status, "Selection is too small.");
+  if (!imageDescriptor || !hasUsableSelection()) {
+    ui.message = "Draw around one object before classifying.";
+    ui.severity = "error";
+    renderUi();
+    return;
+  }
+  if (!engine.isPrepared()) {
+    ui.message = "Load the local model before classifying.";
+    ui.severity = "error";
+    renderUi();
     return;
   }
 
+  const selection = normalizedSelection();
   requestSequence += 1;
   const currentRequest = requestSequence;
   controller?.abort();
   controller = new AbortController();
-  if (!engine.isPrepared()) {
-    element.status.classList.add("error");
-    setText(element.status, "Load the browser model before classifying.");
-    return;
-  }
+  clearStaleResult();
   clearEventLog();
-  setBusy(true);
-  element.status.classList.remove("error");
-  setProgress("accepted", 2, "Starting browser inference…");
+  ui.operation = "classifying";
+  ui.outcome = "none";
+  ui.progressMode = "inference";
+  ui.stage = "accepted";
+  ui.stageStatus = "active";
+  ui.message = "Starting local classification...";
+  ui.severity = "info";
+  ui.technicalError = null;
   startTimer();
+  renderUi();
 
   try {
     const result = await engine.classify({
@@ -609,31 +860,79 @@ async function classify(): Promise<void> {
       signal: controller.signal,
       onProgress(event) {
         if (currentRequest !== requestSequence) return;
-        setProgress(event.stage, event.progress, event.message);
+        updateProgress(event);
         addEvent(event);
       },
     });
     if (currentRequest !== requestSequence) return;
-    const roundTrip = performance.now() - requestStarted;
-    render(result, roundTrip);
-    setProgress("complete", 100, `Browser: ${result.label}`);
+    const roundTrip = elapsedTime();
+    finishTimer(roundTrip);
+    renderResult(result, roundTrip);
+    ui.operation = "idle";
+    ui.outcome = "success";
+    ui.progressMode = "inference";
+    ui.stage = "complete";
+    ui.stageStatus = "active";
+    ui.message = `Classification complete: ${result.label}.`;
+    ui.severity = "info";
+    ui.technicalError = null;
+    renderUi();
   } catch (error) {
+    if (currentRequest !== requestSequence) return;
     if (error instanceof Error && error.name === "AbortError") {
-      setProgress("", 0, "Request cancelled.");
+      ui.operation = "idle";
+      ui.outcome = "cancelled";
+      ui.stageStatus = "cancelled";
+      ui.message = "Classification cancelled.";
+      ui.severity = "info";
+      ui.technicalError = null;
+      finishTimer();
+      renderUi();
     } else {
-      element.status.classList.add("error");
-      setText(element.status, error instanceof Error ? error.message : String(error));
-      addEvent({
-        event: "error",
-        stage: "error",
-        message: String(error),
-        elapsedMs: performance.now() - requestStarted,
-        progress: 0,
-      });
+      failOperation("inference-error", error);
     }
   } finally {
-    stopTimer();
-    setBusy(false);
+    if (currentRequest === requestSequence) controller = null;
+  }
+}
+
+async function loadModel(): Promise<void> {
+  if (ui.capability !== "available" || ui.operation !== "idle") return;
+  clearEventLog();
+  resetModelDownloadProgress();
+  ui.operation = "model-loading";
+  ui.outcome = "none";
+  ui.progressMode = "model";
+  ui.stage = "probe";
+  ui.stageStatus = "active";
+  ui.message = "Checking browser capability for the local model...";
+  ui.severity = "info";
+  ui.technicalError = null;
+  startTimer();
+  renderUi();
+
+  try {
+    await engine.prepare((event) => {
+      updateProgress(event);
+      addEvent(event);
+    });
+    finishTimer();
+    ui.operation = "idle";
+    ui.outcome = "none";
+    ui.progressMode = "model";
+    ui.stage = "ready";
+    ui.stageStatus = "active";
+    ui.message = imageDescriptor
+      ? hasUsableSelection()
+        ? "Local model ready. Starting classification for the selected region."
+        : "Local model ready. Draw around one object to classify it."
+      : "Local model ready. Choose an image to begin.";
+    ui.severity = "info";
+    ui.technicalError = null;
+    renderUi();
+    if (hasUsableSelection()) void classify();
+  } catch (error) {
+    failOperation("model-error", error);
   }
 }
 
@@ -642,40 +941,43 @@ async function initializeBrowserInference(): Promise<void> {
   renderJson(element.rawCapability, { config: INFERENCE_CONFIG });
   setText(
     element.modelStorageEstimate,
-    `${formatBytes(INFERENCE_CONFIG.model.estimated_download_bytes)} model download; browser cache may be evicted`
+    `${formatDownloadBytes(INFERENCE_CONFIG.model.estimated_download_bytes)} compressed download; browser cache may be evicted`
   );
+  renderUi();
 
   try {
     capabilityData = await engine.probe();
     renderBrowserCapability(capabilityData);
-    renderJson(element.rawCapability, {
-      capability: capabilityData,
-      config: INFERENCE_CONFIG,
-    });
-    if (!capabilityData.supported)
-      throw new Error(capabilityData.reason || "WebGPU is unavailable");
-
-    element.capabilityPill.className = "capability-pill ok";
-    setText(element.capabilityText, "Browser WebGPU available");
-    element.loadModel.disabled = false;
-    element.copyDebug.disabled = false;
-    renderEngineState();
+    renderJson(element.rawCapability, { capability: capabilityData, config: INFERENCE_CONFIG });
+    if (!capabilityData.supported) {
+      ui.capability = "unavailable";
+      ui.outcome = "model-error";
+      ui.message = "This browser cannot run the local WebGPU model.";
+      ui.severity = "error";
+      ui.technicalError = capabilityData.reason || "Browser WebGPU capability check failed";
+    } else {
+      ui.capability = "available";
+      ui.outcome = "none";
+      ui.message = "WebGPU is available. Load the local model to continue.";
+      ui.severity = "info";
+      ui.technicalError = null;
+    }
   } catch (error) {
-    element.capabilityPill.className = "capability-pill error";
-    setText(element.capabilityText, "Browser inference unavailable");
-    element.status.classList.add("error");
-    setText(element.status, error instanceof Error ? error.message : String(error));
+    ui.capability = "unavailable";
+    ui.outcome = "model-error";
+    ui.message = "This browser could not initialize local WebGPU inference.";
+    ui.severity = "error";
+    ui.technicalError = errorDetails(error);
     renderJson(element.rawCapability, {
       capability: capabilityData,
-      error: String(error),
+      error: ui.technicalError,
       config: INFERENCE_CONFIG,
     });
   }
+  renderUi();
 }
 
 async function loadImage(file: File): Promise<void> {
-  controller?.abort();
-  requestSequence += 1;
   imageController?.abort();
   imageController = new AbortController();
   imageLoadSequence += 1;
@@ -693,19 +995,23 @@ async function loadImage(file: File): Promise<void> {
   element.canvasShell.classList.add("empty");
   element.canvasPlaceholder.hidden = false;
   setText(element.fileName, file.name);
-  setText(element.imageDimensions, `${formatBytes(file.size)} · decoding in browser`);
-  setBusy(true);
-  element.status.classList.remove("error");
-  setText(element.status, "Decoding and retaining the image in this browser…");
+  setText(element.imageDimensions, `${formatBytes(file.size)} | decoding in browser`);
+  ui.operation = "image-loading";
+  ui.outcome = "none";
+  ui.progressMode = "idle";
+  ui.stage = null;
+  ui.stageStatus = "idle";
+  ui.message = "Decoding and retaining the image in this browser...";
+  ui.severity = "info";
+  ui.technicalError = null;
+  renderUi();
 
-  if (file.size > INFERENCE_CONFIG.maxImageBytes) {
-    throw new Error(`Image exceeds ${formatBytes(INFERENCE_CONFIG.maxImageBytes)}`);
-  }
   let bitmapResult: ImageBitmap | null = null;
   try {
-    bitmapResult = await createImageBitmap(file, {
-      imageOrientation: "from-image",
-    });
+    if (file.size > INFERENCE_CONFIG.maxImageBytes) {
+      throw new Error(`Image exceeds ${formatBytes(INFERENCE_CONFIG.maxImageBytes)}`);
+    }
+    bitmapResult = await createImageBitmap(file, { imageOrientation: "from-image" });
     if (bitmapResult.width * bitmapResult.height > INFERENCE_CONFIG.maxImagePixels) {
       throw new Error("Image has too many decoded pixels");
     }
@@ -730,40 +1036,31 @@ async function loadImage(file: File): Promise<void> {
     bitmapResult?.close();
     if (currentLoad === imageLoadSequence && !imageDescriptor) imageController = null;
   }
+
+  if (!bitmap) throw new Error("The image could not be prepared");
   const scale = Math.min(1, 1200 / bitmap.width, 1200 / bitmap.height);
   element.canvas.width = Math.max(1, Math.round(bitmap.width * scale));
   element.canvas.height = Math.max(1, Math.round(bitmap.height * scale));
   element.canvasShell.classList.remove("empty");
   element.canvasPlaceholder.hidden = true;
-  setText(element.fileName, file.name);
   setText(
     element.imageDimensions,
-    `${bitmap.width} × ${bitmap.height} · ${formatBytes(file.size)} · browser source retained`
+    `${bitmap.width} x ${bitmap.height} | ${formatBytes(file.size)} | browser source retained`
   );
 
   start = null;
   end = null;
-  latest = null;
-  resetProgress();
+  clearStaleResult();
   clearEventLog();
-  const metricTargets: Node[] = [
-    element.label,
-    element.probability,
-    element.coverage,
-    element.totalTime,
-    element.inferenceTime,
-    element.preprocessTime,
-    element.cropDimensions,
-  ];
-  for (const target of metricTargets) setText(target, "—");
-  element.cropPreview.width = 1;
-  element.cropPreview.height = 1;
-  cropContext.clearRect(0, 0, 1, 1);
-  renderJson(element.rawResult, null);
-  element.copyResult.disabled = true;
-  setBusy(false);
+  ui.operation = "idle";
+  ui.outcome = "none";
+  ui.message = engine.isPrepared()
+    ? "Image ready. Draw around one object."
+    : "Image ready. Load the local model, then draw around one object.";
+  ui.severity = "info";
+  ui.technicalError = null;
   draw();
-  setText(element.status, "Draw around one subject; inference starts when you release.");
+  renderUi();
 }
 
 async function copyText(value: string, button: HTMLButtonElement): Promise<void> {
@@ -783,10 +1080,26 @@ async function copyText(value: string, button: HTMLButtonElement): Promise<void>
       if (!copied) throw new Error("Browser copy command failed");
     }
     setText(button, "Copied");
+    setText(element.actionFeedback, "Copied to clipboard.");
   } catch {
     setText(button, "Copy failed");
+    setText(element.actionFeedback, "Copy failed. Try again.");
   }
   window.setTimeout(() => setText(button, original), 1200);
+}
+
+function runPrimaryAction(): void {
+  const action = currentPrimaryAction();
+  if (action.intent === "load-model") void loadModel();
+  if (action.intent === "choose-image") element.file.click();
+  if (action.intent === "focus-selection") {
+    element.coordinatePanel.open = true;
+    element.x1.focus();
+    ui.message = "Set the selection coordinates, or draw around one object with a pointer.";
+    ui.severity = "info";
+    renderUi();
+  }
+  if (action.intent === "classify") void classify();
 }
 
 element.file.addEventListener("change", async () => {
@@ -795,24 +1108,34 @@ element.file.addEventListener("change", async () => {
   try {
     await loadImage(file);
   } catch (error) {
-    setBusy(false);
-    if (error instanceof Error && error.name === "AbortError") {
-      setText(element.status, "Image loading cancelled.");
-      return;
-    }
-    element.status.classList.add("error");
-    setText(element.status, `Could not open image: ${error}`);
+    ui.operation = "idle";
+    ui.outcome = "none";
+    ui.progressMode = "idle";
+    ui.stage = null;
+    ui.stageStatus = "idle";
+    ui.message =
+      error instanceof Error && error.name === "AbortError"
+        ? "Image loading cancelled."
+        : "The image could not be opened.";
+    ui.severity = "error";
+    ui.technicalError = errorDetails(error);
+    renderUi();
   }
 });
 
 element.canvas.addEventListener("pointerdown", (event) => {
-  if (!bitmap || element.canvas.classList.contains("busy")) return;
+  if (!bitmap || ui.operation !== "idle") return;
   element.canvas.setPointerCapture(event.pointerId);
   start = point(event);
   end = start;
   drawing = true;
-  latest = null;
+  clearStaleResult();
+  resetSelectionWorkflow();
+  ui.message = "Adjust the selection around one object.";
+  ui.severity = "info";
+  ui.technicalError = null;
   draw();
+  renderUi();
 });
 
 element.canvas.addEventListener("pointermove", (event) => {
@@ -826,8 +1149,7 @@ element.canvas.addEventListener("pointerup", (event) => {
   drawing = false;
   end = point(event);
   syncCoordinateInputs();
-  draw();
-  classify();
+  classifyCompletedSelection();
 });
 
 element.canvas.addEventListener("pointercancel", () => {
@@ -836,34 +1158,14 @@ element.canvas.addEventListener("pointercancel", () => {
 });
 
 element.shape.addEventListener("change", () => {
-  draw();
-  if (start && end) classify();
+  if (!start || !end) return;
+  clearStaleResult();
+  resetSelectionWorkflow();
+  classifyCompletedSelection();
 });
 
-element.loadModel.addEventListener("click", async () => {
-  element.loadModel.disabled = true;
-  element.status.classList.remove("error");
-  try {
-    await engine.prepare((event) => {
-      setProgress(event.stage, event.progress, event.message);
-      addEvent(event);
-    });
-    setText(element.status, "Browser model loaded and warmed up. Inference stays on this device.");
-    setText(element.loadModel, "Model ready");
-    renderEngineState();
-    setBusy(false);
-  } catch (error) {
-    element.status.classList.add("error");
-    setText(
-      element.status,
-      `Model loading failed: ${error instanceof Error ? error.message : String(error)}`
-    );
-    element.loadModel.disabled = false;
-  }
-});
-
-element.retry.addEventListener("click", classify);
-element.cancel.addEventListener("click", cancelActiveRequest);
+element.primaryAction.addEventListener("click", runPrimaryAction);
+element.cancel.addEventListener("click", cancelClassification);
 element.applyCoordinates.addEventListener("click", applyCoordinateInputs);
 element.clearEvents.addEventListener("click", clearEventLog);
 element.copyResult.addEventListener("click", () =>
@@ -876,17 +1178,19 @@ element.copyDebug.addEventListener("click", () => {
     latest,
     events: eventHistory,
   };
-  copyText(JSON.stringify(debug, null, 2) ?? "null", element.copyDebug);
+  void copyText(JSON.stringify(debug, null, 2) ?? "null", element.copyDebug);
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !element.cancel.disabled) cancelActiveRequest();
+  if (event.key === "Escape" && ui.operation === "classifying") cancelClassification();
 });
 
 window.addEventListener("pagehide", () => void engine.dispose());
 
-(async () => {
-  resetProgress();
-  setBusy(false);
-  await initializeBrowserInference();
+(() => {
+  resetResultPresentation();
+  clearEventLog();
+  clearTimer();
+  renderUi();
+  void initializeBrowserInference();
 })();

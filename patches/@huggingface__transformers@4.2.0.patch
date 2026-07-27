@@ -1,0 +1,13 @@
+diff --git a/dist/transformers.web.js b/dist/transformers.web.js
+index bb7b32717a42475a5f66411a33d5e5964dfda3e2..1bf464c9a4f69238fdf308ff00804947dbcb9fe7 100644
+--- a/dist/transformers.web.js	
++++ b/dist/transformers.web.js	
+@@ -2890,7 +2890,7 @@ function preprocess(template, options = {}) {
+   if (options.trim_blocks) {
+     template = template.replace(/([#%-]})\n/g, "$1");
+   }
+-  return template.replace(/{%\s*(end)?generation\s*%}/gs, "");
++  return template.replace(/(\s*){%(-?)\s*(?:end)?generation\s*(-?)%}(\s*)/gs, (_, before, lstrip, rstrip, after) => (lstrip ? "" : before) + (rstrip ? "" : after));
+ }
+ function tokenize(source, options = {}) {
+   const tokens = [];

@@ -4,8 +4,8 @@
   "revision": "3e0c8bb3b2268ffa7b30dba6a3c2d1985d87fb14",
   "transformers_js_version": "4.2.0",
   "runtime": "webgpu",
-  "estimated_download_bytes": 570425344,
-  "size_status": "estimated",
+  "estimated_download_bytes": 573000000,
+  "size_status": "verified",
   "integrity_status": "pending-release-verification",
   "dtype": {
     "embed_tokens": "fp16",
@@ -74,7 +74,7 @@
       "role": "decoder",
       "path": "onnx/decoder_model_merged_q4f16.onnx_data",
       "dtype": "q4f16",
-      "expected_bytes": 231735296,
+      "expected_bytes": 234309952,
       "resolved_url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/3e0c8bb3b2268ffa7b30dba6a3c2d1985d87fb14/onnx/decoder_model_merged_q4f16.onnx_data"
     },
     {

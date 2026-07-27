@@ -5,10 +5,17 @@ import {
   AutoProcessor,
   env,
   InterruptableStoppingCriteria,
+  Lfm2VlImageProcessor,
   RawImage,
 } from "@huggingface/transformers";
 import { validateImageContainer } from "../image-format";
 import { prepareCrop, roundTo, type DecodedImage } from "../preprocess";
+import {
+  expectedLfm2VlMaxNumPatches,
+  lfm2VlProcessorControls,
+  lfm2VlVisualTokenCount,
+  multimodalBudgetMessage,
+} from "../processor-controls";
 import type {
   BrowserCapability,
   ClassificationResult,
@@ -31,8 +38,21 @@ type ProcessorConfigSurface = UnknownRecord & {
   config?: UnknownRecord;
   image_processor_config?: UnknownRecord;
 };
+type RuntimeImageProcessor = ProcessorConfigSurface & {
+  do_image_splitting?: unknown;
+  min_image_tokens?: unknown;
+  max_image_tokens?: unknown;
+  min_tiles?: unknown;
+  max_tiles?: unknown;
+  resample?: unknown;
+  downsample_factor?: unknown;
+  tile_size?: unknown;
+  encoder_patch_size?: unknown;
+  max_num_patches?: unknown;
+};
 type RuntimeProcessor = ProcessorConfigSurface & {
-  image_processor?: ProcessorConfigSurface;
+  image_processor?: RuntimeImageProcessor;
+  components?: { image_processor?: RuntimeImageProcessor };
   apply_chat_template(
     messages: readonly {
       role: string;
@@ -83,6 +103,21 @@ let activeRequest: Extract<WorkerRequest, { type: "CLASSIFY" }> | null = null;
 let pendingRequest: Extract<WorkerRequest, { type: "CLASSIFY" }> | null = null;
 const requestStartedAt = new Map<number, number>();
 let deviceLossSubscribed = false;
+let successfulCapability: BrowserCapability | null = null;
+
+class ProcessorConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProcessorConfigurationError";
+  }
+}
+
+class MultimodalInputBudgetError extends Error {
+  constructor(inputLength: number, contextTokens: number, imagePlaceholderCount?: number) {
+    super(multimodalBudgetMessage(inputLength, contextTokens, imagePlaceholderCount));
+    this.name = "MultimodalInputBudgetError";
+  }
+}
 
 function post(response: WorkerResponse): void {
   worker.postMessage(response);
@@ -154,6 +189,8 @@ function recordOfNumbers(value: unknown): Record<string, number> | undefined {
 }
 
 async function probe(config: InferenceConfig): Promise<BrowserCapability> {
+  if (successfulCapability) return successfulCapability;
+
   const capability: BrowserCapability = {
     supported: false,
     secureContext: worker.isSecureContext,
@@ -228,6 +265,7 @@ async function probe(config: InferenceConfig): Promise<BrowserCapability> {
   capability.deviceAcquired = true;
   device.destroy();
   capability.supported = true;
+  successfulCapability = capability;
   return capability;
 }
 
@@ -240,31 +278,50 @@ function configureRuntime(): void {
   env.useBrowserCache = true;
 }
 
-function applyProcessorParityControls(config: InferenceConfig): string[] {
-  const warnings: string[] = [];
-  const target = processor?.image_processor ?? processor;
-  const controls: Record<string, unknown> = {
-    do_image_splitting: false,
-    min_imageTokens: Math.min(32, config.imageTokens),
-    max_imageTokens: config.imageTokens,
-    min_tiles: 1,
-    max_tiles: 1,
-    resample: 2,
-  };
-  for (const [key, value] of Object.entries(controls)) {
-    let applied = false;
-    for (const candidate of [target, target?.config, target?.image_processor_config]) {
-      if (!candidate || typeof candidate !== "object") continue;
-      try {
-        (candidate as Record<string, unknown>)[key] = value;
-        applied = true;
-      } catch {
-        // Continue to the next supported configuration surface.
-      }
-    }
-    if (!applied) warnings.push(`Could not apply processor control: ${key}`);
+function effectiveProcessorWarnings(config: InferenceConfig): string[] {
+  const target = requiredProcessor().image_processor;
+  if (!target) throw new ProcessorConfigurationError("LFM2-VL image processor is unavailable");
+
+  const controls = lfm2VlProcessorControls(config);
+  const mismatches = Object.entries(controls).filter(([key, expected]) => target[key] !== expected);
+  const downsampleFactor = Number(target.downsample_factor);
+  const tileSize = Number(target.tile_size);
+  const encoderPatchSize = Number(target.encoder_patch_size);
+  const expectedMaxNumPatches = expectedLfm2VlMaxNumPatches(
+    controls.max_image_tokens,
+    downsampleFactor,
+    controls.do_image_splitting,
+    tileSize,
+    encoderPatchSize
+  );
+  if (!Number.isFinite(expectedMaxNumPatches) || expectedMaxNumPatches !== target.max_num_patches) {
+    mismatches.push(["max_num_patches", expectedMaxNumPatches]);
   }
-  return warnings;
+  if (mismatches.length) {
+    const rendered = mismatches.map(([key, expected]) => `${key}=${String(expected)}`).join(", ");
+    throw new ProcessorConfigurationError(
+      `LFM2-VL processor controls were not applied: ${rendered}`
+    );
+  }
+  return [];
+}
+
+function configureProcessorParityControls(config: InferenceConfig): string[] {
+  const activeProcessor = requiredProcessor();
+  const currentImageProcessor = activeProcessor.image_processor;
+  const currentConfig = asRecord(currentImageProcessor?.config);
+  if (!currentConfig || !activeProcessor.components) {
+    throw new ProcessorConfigurationError(
+      "LFM2-VL processor does not expose a reconstructible image processor"
+    );
+  }
+
+  const controls = lfm2VlProcessorControls(config);
+  activeProcessor.components.image_processor = new Lfm2VlImageProcessor({
+    ...currentConfig,
+    ...controls,
+  }) as unknown as RuntimeImageProcessor;
+  return effectiveProcessorWarnings(config);
 }
 
 function subscribeToDeviceLoss(): void {
@@ -276,6 +333,7 @@ function subscribeToDeviceLoss(): void {
     preparedRevision = null;
     model = null;
     processor = null;
+    successfulCapability = null;
     deviceLossSubscribed = false;
     post({
       id: 0,
@@ -285,25 +343,29 @@ function subscribeToDeviceLoss(): void {
   });
 }
 
-function modelLoadProgress(id: number, item: unknown): void {
+function modelLoadProgress(
+  id: number,
+  item: unknown,
+  downloadedByFile: Map<string, number>,
+  predictedBytes: number
+): void {
   const progressItem = asRecord(item);
   const status = String(progressItem?.status ?? "downloading");
   const file = typeof progressItem?.file === "string" ? progressItem.file : undefined;
   const loaded = Number(progressItem?.loaded);
   const total = Number(progressItem?.total);
+  const progressKey = file ?? `${status}:${Number.isFinite(total) ? total : "unknown"}`;
+  if (Number.isFinite(loaded) && loaded >= 0) downloadedByFile.set(progressKey, loaded);
+  const downloadedBytes = [...downloadedByFile.values()].reduce((sum, value) => sum + value, 0);
   const percentage =
-    Number.isFinite(loaded) && Number.isFinite(total) && total > 0 ? (loaded / total) * 75 : 10;
-  progress(
-    id,
-    "install",
-    file ? `${status}: ${file}` : `Model ${status}`,
-    Math.min(80, percentage),
-    {
-      file,
-      loaded: Number.isFinite(loaded) ? loaded : undefined,
-      total: Number.isFinite(total) ? total : undefined,
-    }
-  );
+    predictedBytes > 0 ? Math.min(100, (downloadedBytes / predictedBytes) * 100) : 0;
+  progress(id, "install", file ? `${status}: ${file}` : `Model ${status}`, percentage, {
+    file,
+    loaded: Number.isFinite(loaded) ? loaded : undefined,
+    total: Number.isFinite(total) ? total : undefined,
+    downloaded_bytes: downloadedBytes,
+    predicted_bytes: predictedBytes,
+  });
 }
 
 async function prepareModel(id: number, config: InferenceConfig, warmup = true): Promise<void> {
@@ -322,21 +384,28 @@ async function prepareModel(id: number, config: InferenceConfig, warmup = true):
       4,
       capability as unknown as Record<string, unknown>
     );
-    const options = {
+    const baseOptions = {
       revision: config.model.revision,
-      progress_callback: (item: unknown) => modelLoadProgress(id, item),
+    };
+    const downloadedByFile = new Map<string, number>();
+    const progressCallback = (item: unknown) =>
+      modelLoadProgress(id, item, downloadedByFile, config.model.estimated_download_bytes);
+    const processorOptions = {
+      ...baseOptions,
+      progress_callback: progressCallback,
     };
     const [loadedProcessor, loadedModel] = await Promise.all([
-      AutoProcessor.from_pretrained(config.model.repository, options),
+      AutoProcessor.from_pretrained(config.model.repository, processorOptions),
       AutoModelForImageTextToText.from_pretrained(config.model.repository, {
-        ...options,
+        ...baseOptions,
         device: "webgpu",
         dtype: config.model.dtype,
+        progress_callback: progressCallback,
       }),
     ]);
     processor = loadedProcessor as unknown as RuntimeProcessor;
     model = loadedModel as unknown as RuntimeModel;
-    const warnings = applyProcessorParityControls(config);
+    const warnings = configureProcessorParityControls(config);
     preparedRevision = config.model.revision;
     subscribeToDeviceLoss();
     progress(id, "compile", "Model sessions created", 85, {
@@ -354,6 +423,7 @@ async function prepareModel(id: number, config: InferenceConfig, warmup = true):
     model = null;
     processor = null;
     preparedRevision = null;
+    successfulCapability = null;
     throw error;
   } finally {
     preparePromise = null;
@@ -427,6 +497,15 @@ function processorDiagnostics(
   const pixelValueRecord = asRecord(pixelValues);
   const spatialShapeRecord = asRecord(spatialShapes);
   const spatialShapeData = spatialShapeRecord?.data;
+  const spatialShapeValues = spatialShapeData
+    ? Array.from(tensorData(spatialShapes), Number)
+    : undefined;
+  const encoderPatchSize = Number(processor?.image_processor?.encoder_patch_size);
+  const [patchRows, patchColumns] = spatialShapeValues ?? [];
+  const processedImageDimensions =
+    patchRows !== undefined && patchColumns !== undefined && Number.isFinite(encoderPatchSize)
+      ? [patchRows * encoderPatchSize, patchColumns * encoderPatchSize]
+      : undefined;
   const ids = tensorData(inputIds);
   let placeholders: number | undefined;
   if (imageTokenId !== undefined) {
@@ -438,9 +517,8 @@ function processorDiagnostics(
   return {
     prepared_image_dimensions: [prepared.width, prepared.height],
     pixel_tensor_shape: pixelValueRecord?.dims,
-    spatial_shapes: spatialShapeData
-      ? Array.from(tensorData(spatialShapes), Number)
-      : spatialShapeRecord?.dims,
+    spatial_shapes: spatialShapeValues ?? spatialShapeRecord?.dims,
+    processed_image_dimensions: processedImageDimensions,
     tile_count: Array.isArray(pixelValueRecord?.dims) ? pixelValueRecord.dims[0] : undefined,
     text_sequence_length: tensorLastDimension(inputIds),
     image_placeholder_count: placeholders,
@@ -454,7 +532,7 @@ async function processInputs(
   config: InferenceConfig
 ): Promise<{ inputs: ProcessorInputs; warnings: string[] }> {
   const activeProcessor = requiredProcessor();
-  const warnings = applyProcessorParityControls(config);
+  const warnings = effectiveProcessorWarnings(config);
   const messages = [
     {
       role: "user",
@@ -469,7 +547,16 @@ async function processInputs(
   });
   const inputLength = tensorLastDimension(inputs?.input_ids);
   if (inputLength > config.contextTokens) {
-    throw new Error(`Prepared prompt exceeds the ${config.contextTokens}-token application guard`);
+    const imageTokenId = model?.config?.image_token_id;
+    const ids = tensorData(inputs.input_ids);
+    let imagePlaceholderCount: number | undefined;
+    if (imageTokenId !== undefined) {
+      imagePlaceholderCount = 0;
+      for (let index = 0; index < ids.length; index += 1) {
+        if (Number(ids[index]) === Number(imageTokenId)) imagePlaceholderCount += 1;
+      }
+    }
+    throw new MultimodalInputBudgetError(inputLength, config.contextTokens, imagePlaceholderCount);
   }
   return { inputs, warnings };
 }
@@ -536,9 +623,31 @@ async function warmupModel(id: number, config: InferenceConfig, warnings: string
   const result = await generate(image, warmupConfig);
   if (!result.rawOutput && result.outputTokens < 1)
     throw new Error("Warm-up produced no output token");
+  const imagePlaceholderCount = Number(result.diagnostics.image_placeholder_count);
+  if (!Number.isInteger(imagePlaceholderCount) || imagePlaceholderCount !== config.imageTokens) {
+    throw new ProcessorConfigurationError(
+      `Warm-up expected ${config.imageTokens} image placeholders but prepared ${String(result.diagnostics.image_placeholder_count)}`
+    );
+  }
+  const processedDimensions = result.diagnostics.processed_image_dimensions;
+  const imageProcessor = requiredProcessor().image_processor;
+  const processedHeight = Array.isArray(processedDimensions) ? Number(processedDimensions[0]) : NaN;
+  const processedWidth = Array.isArray(processedDimensions) ? Number(processedDimensions[1]) : NaN;
+  const observedVisualTokens = lfm2VlVisualTokenCount(
+    processedHeight,
+    processedWidth,
+    Number(imageProcessor?.encoder_patch_size),
+    Number(imageProcessor?.downsample_factor)
+  );
+  if (observedVisualTokens !== config.imageTokens) {
+    throw new ProcessorConfigurationError(
+      `Warm-up processed ${String(processedDimensions)} into ${observedVisualTokens} visual tokens; expected ${config.imageTokens}`
+    );
+  }
   progress(id, "warmup", "Warm-up completed", 97, {
     input_tokens: result.inputLength,
     output_tokens: result.outputTokens,
+    processor: result.diagnostics,
     processor_warnings: warnings,
   });
 }
@@ -695,6 +804,7 @@ async function dispose(): Promise<void> {
   preparedRevision = null;
   preparePromise = null;
   deviceLossSubscribed = false;
+  successfulCapability = null;
 }
 
 worker.addEventListener("message", (message: MessageEvent<WorkerRequest>) => {

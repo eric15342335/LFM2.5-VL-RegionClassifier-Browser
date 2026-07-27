@@ -27,27 +27,24 @@
   <body>
     <a
       class="skip-link"
-      href="#workspace"
-      >Skip to workspace</a
+      href="#imageWorkspace"
+      >Skip to image workspace</a
     >
 
     <header class="app-header">
       <div>
-        <p class="eyebrow">Selected-region vision inference</p>
         <h1>LFM2.5-VL Classifier</h1>
-        <p class="header-copy">Draw around one object and classify it entirely in your browser.</p>
+        <p class="header-copy">Choose an image, select one object, and classify it locally.</p>
       </div>
       <div
         id="capabilityPill"
         class="capability-pill"
-        role="status"
-        aria-live="polite"
       >
         <span
           class="capability-dot"
           aria-hidden="true"
         ></span>
-        <span id="capabilityText">Checking browser</span>
+        <span id="capabilityText">Checking WebGPU</span>
       </div>
     </header>
 
@@ -84,7 +81,7 @@
           />
         </div>
 
-        <label>
+        <label class="shape-control">
           <span class="control-label">Selection shape</span>
           <select id="shape">
             <option value="rect">Rectangle</option>
@@ -94,37 +91,35 @@
 
         <div class="browser-model">
           <div>
-            <span class="control-label">Browser model</span>
-            <strong id="browserModelStatus">Checking WebGPU capability…</strong>
+            <span class="control-label">Local model</span>
+            <strong id="browserModelStatus">Checking browser capability...</strong>
             <small id="modelStorageEstimate">Storage estimate unavailable</small>
+            <div
+              id="modelDownloadProgress"
+              class="model-download-progress"
+              hidden
+            >
+              <div class="model-download-heading">
+                <span>Downloading model</span>
+                <output
+                  id="modelDownloadPercent"
+                  aria-label="Model download percentage"
+                  >0%</output
+                >
+              </div>
+              <progress
+                id="modelDownloadBar"
+                class="progress-track"
+                max="100"
+                value="0"
+                aria-label="Model download progress"
+                aria-describedby="modelDownloadMeta"
+              >
+                0%
+              </progress>
+              <small id="modelDownloadMeta">Preparing download…</small>
+            </div>
           </div>
-          <button
-            id="loadModel"
-            class="button"
-            type="button"
-            disabled
-          >
-            Load browser model
-          </button>
-        </div>
-
-        <div class="control-actions">
-          <button
-            id="retry"
-            class="button primary"
-            type="button"
-            disabled
-          >
-            Classify again
-          </button>
-          <button
-            id="cancel"
-            class="button"
-            type="button"
-            disabled
-          >
-            Cancel
-          </button>
         </div>
       </section>
 
@@ -132,92 +127,57 @@
         class="surface status-panel"
         aria-labelledby="statusTitle"
       >
-        <div
-          class="execution-row"
-          aria-live="polite"
-        >
-          <span>Inference runtime</span>
-          <strong
-            id="executionBadge"
-            class="badge execution browser"
-            >Browser WebGPU</strong
-          >
-        </div>
         <div class="section-heading">
-          <div>
-            <p class="eyebrow">Live request</p>
-            <h2 id="statusTitle">Inference pipeline</h2>
-          </div>
+          <h2 id="statusTitle">Status</h2>
           <output
             id="elapsed"
             class="elapsed"
+            aria-label="Elapsed time"
             >0 ms</output
           >
         </div>
         <p
           id="status"
           class="status-message"
+        >
+          Checking browser support...
+        </p>
+        <p
+          id="statusAnnouncement"
+          class="sr-only"
           role="status"
           aria-live="polite"
+          aria-atomic="true"
+        ></p>
+        <p
+          id="actionFeedback"
+          class="sr-only"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        ></p>
+        <details
+          id="technicalDetails"
+          class="technical-details"
+          hidden
         >
-          Choose an image, then draw around one object.
-        </p>
-        <progress
-          id="progressTrack"
-          class="progress-track"
-          aria-label="Inference progress"
-          max="100"
-          value="0"
-        ></progress>
-        <ol
-          id="pipeline"
-          class="pipeline"
-        >
-          <li data-stage="accepted">Accepted</li>
-          <li data-stage="crop">Preprocess</li>
-          <li data-stage="inference">WebGPU</li>
-          <li data-stage="complete">Complete</li>
-        </ol>
-      </section>
-
-      <section
-        class="metric-grid"
-        aria-label="Latest inference metrics"
-      >
-        <article class="metric-card">
-          <span>Result</span>
-          <strong id="label">—</strong>
-        </article>
-        <article class="metric-card">
-          <span>Mean token probability</span>
-          <strong id="probability">—</strong>
-        </article>
-        <article class="metric-card">
-          <span>Selected / crop</span>
-          <strong id="coverage">—</strong>
-        </article>
-        <article class="metric-card">
-          <span>Total</span>
-          <strong id="totalTime">—</strong>
-        </article>
-        <article class="metric-card">
-          <span>WebGPU inference</span>
-          <strong id="inferenceTime">—</strong>
-        </article>
-        <article class="metric-card">
-          <span>Preprocess</span>
-          <strong id="preprocessTime">—</strong>
-        </article>
+          <summary>Technical details</summary>
+          <pre
+            id="technicalError"
+            class="json-view"
+          ><code>No technical error recorded.</code></pre>
+        </details>
       </section>
 
       <div class="workspace-grid">
         <section
+          id="imageWorkspace"
           class="surface image-panel"
           aria-labelledby="imageTitle"
+          tabindex="-1"
         >
           <div class="section-heading">
             <div>
-              <p class="eyebrow">Input</p>
               <h2 id="imageTitle">Image workspace</h2>
             </div>
             <span
@@ -234,22 +194,44 @@
             <canvas
               id="canvas"
               role="img"
-              aria-label="Image selection canvas. Draw with a pointer, or use the coordinate controls below."
-            ></canvas>
+              aria-label="Selected image. Draw a selection with a pointer, or use the keyboard-accessible coordinates below."
+              aria-describedby="canvasInstructions"
+              >Selected image preview.</canvas
+            >
+            <p
+              id="canvasInstructions"
+              class="sr-only"
+            >
+              After choosing an image, draw around one object with a pointer or use the coordinate
+              controls below.
+            </p>
             <p
               id="canvasPlaceholder"
               class="canvas-placeholder"
             >
-              Upload an image to begin.
+              <strong class="canvas-placeholder-title">Choose an image to begin</strong>
+              <span>Your image stays in this browser.</span>
             </p>
           </div>
 
-          <div class="legend">
+          <div
+            id="selectionLegend"
+            class="legend"
+            hidden
+          >
             <span><i class="legend-swatch selection"></i>User selection</span>
-            <span><i class="legend-swatch crop"></i>Padded model crop</span>
+            <span
+              id="cropLegend"
+              hidden
+              ><i class="legend-swatch crop"></i>Padded model crop</span
+            >
           </div>
 
-          <details class="coordinate-panel">
+          <details
+            id="coordinatePanel"
+            class="coordinate-panel"
+            hidden
+          >
             <summary>Keyboard-accessible coordinates</summary>
             <div class="coordinate-grid">
               <label
@@ -261,7 +243,8 @@
                   max="100"
                   step="0.1"
                   value="20"
-              /></label>
+                />
+              </label>
               <label
                 >Y1 %
                 <input
@@ -271,7 +254,8 @@
                   max="100"
                   step="0.1"
                   value="20"
-              /></label>
+                />
+              </label>
               <label
                 >X2 %
                 <input
@@ -281,7 +265,8 @@
                   max="100"
                   step="0.1"
                   value="80"
-              /></label>
+                />
+              </label>
               <label
                 >Y2 %
                 <input
@@ -291,7 +276,8 @@
                   max="100"
                   step="0.1"
                   value="80"
-              /></label>
+                />
+              </label>
             </div>
             <button
               id="applyCoordinates"
@@ -299,19 +285,23 @@
               type="button"
               disabled
             >
-              Apply and classify
+              Apply selection
             </button>
           </details>
 
-          <div class="crop-preview-wrap">
-            <div class="section-heading compact">
-              <h3 id="cropPreviewTitle">Model crop preview</h3>
+          <details
+            id="cropPreviewWrap"
+            class="crop-preview-wrap"
+            hidden
+          >
+            <summary class="crop-preview-summary">
+              <span id="cropPreviewTitle">Model crop preview</span>
               <span
                 id="cropDimensions"
                 class="subtle"
-                >—</span
+                >Not available</span
               >
-            </div>
+            </summary>
             <canvas
               id="cropPreview"
               class="crop-preview"
@@ -319,166 +309,215 @@
               aria-labelledby="cropPreviewTitle"
               >Preview of the padded crop sent to the model.</canvas
             >
-          </div>
+          </details>
         </section>
 
         <aside
-          class="diagnostics-column"
-          aria-label="Runtime diagnostics"
+          class="surface task-panel"
+          aria-labelledby="taskTitle"
         >
-          <section
-            class="surface"
-            aria-labelledby="hardwareTitle"
-          >
-            <div class="section-heading compact">
-              <div>
-                <p class="eyebrow">Runtime</p>
-                <h2 id="hardwareTitle">Browser capability</h2>
-              </div>
-              <span
-                id="deviceBadge"
-                class="badge"
-                >—</span
-              >
+          <div class="section-heading compact">
+            <div>
+              <h2 id="taskTitle">Selected object</h2>
             </div>
+          </div>
+          <div
+            id="resultEmpty"
+            class="result-empty"
+          >
+            <h3>No classification yet</h3>
+            <p>Choose an image and draw around one object.</p>
+          </div>
+          <div
+            id="resultContent"
+            hidden
+          >
             <p
-              id="hardwareSummary"
-              class="summary-copy"
+              id="label"
+              class="result-label"
             >
-              Checking WebGPU and browser storage…
+              Not available
             </p>
-            <dl
-              id="hardwareFacts"
-              class="fact-grid"
-            ></dl>
-          </section>
-
-          <section
-            class="surface"
-            aria-labelledby="timingTitle"
-          >
-            <div class="section-heading compact">
+            <dl class="result-facts">
               <div>
-                <p class="eyebrow">Latest request</p>
-                <h2 id="timingTitle">Timing breakdown</h2>
+                <dt>Token confidence</dt>
+                <dd id="probability">Not available</dd>
               </div>
-            </div>
-            <div
-              id="timingBars"
-              class="timing-bars"
+              <div>
+                <dt>Selection within crop</dt>
+                <dd id="coverage">Not available</dd>
+              </div>
+              <div>
+                <dt>Total inference time</dt>
+                <dd id="totalTime">Not available</dd>
+              </div>
+            </dl>
+          </div>
+          <p
+            id="actionHint"
+            class="summary-copy"
+          >
+            The model runs locally in this browser. Images remain on this device.
+          </p>
+          <div class="task-actions">
+            <button
+              id="primaryAction"
+              class="button primary"
+              type="button"
+              disabled
             >
-              <p class="empty-copy">Run a classification to populate timings.</p>
-            </div>
-          </section>
-
-          <section
-            class="surface"
-            aria-labelledby="engineTitle"
-          >
-            <div class="section-heading compact">
-              <div>
-                <p class="eyebrow">Configuration</p>
-                <h2 id="engineTitle">Model and engine</h2>
-              </div>
-            </div>
-            <dl
-              id="engineFacts"
-              class="fact-grid"
-            ></dl>
-          </section>
-
-          <section
-            class="surface"
-            aria-labelledby="eventsTitle"
-          >
-            <div class="section-heading compact">
-              <div>
-                <p class="eyebrow">Trace</p>
-                <h2 id="eventsTitle">Event log</h2>
-              </div>
-              <button
-                id="clearEvents"
-                class="button small"
-                type="button"
-              >
-                Clear
-              </button>
-            </div>
-            <ol
-              id="eventLog"
-              class="event-log"
+              Checking browser...
+            </button>
+            <button
+              id="cancel"
+              class="button"
+              type="button"
+              hidden
+              disabled
             >
-              <li class="empty-copy">No request events yet.</li>
-            </ol>
-          </section>
+              Cancel
+            </button>
+          </div>
         </aside>
       </div>
 
       <section
-        class="surface details-panel"
-        aria-labelledby="generationTitle"
+        class="secondary-sections"
+        aria-label="Developer details"
       >
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Output</p>
-            <h2 id="generationTitle">Generation details</h2>
-          </div>
-          <button
-            id="copyResult"
-            class="button small"
-            type="button"
-            disabled
-          >
-            Copy result
-          </button>
-        </div>
-        <div class="table-wrap">
-          <table aria-labelledby="generationTitle">
-            <tbody id="generation">
-              <tr>
-                <th scope="row">State</th>
-                <td>No result yet.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+        <details class="secondary-panel">
+          <summary>
+            <span>
+              <strong>Developer details</strong>
+              <span class="summary-meta">Browser compatibility, model data, and request trace</span>
+            </span>
+          </summary>
+          <div class="secondary-content diagnostics-content">
+            <div class="diagnostic-grid">
+              <section aria-labelledby="hardwareTitle">
+                <div class="section-heading compact">
+                  <div>
+                    <h2 id="hardwareTitle">Browser support</h2>
+                  </div>
+                  <span
+                    id="deviceBadge"
+                    class="badge"
+                    >Unknown</span
+                  >
+                </div>
+                <p
+                  id="hardwareSummary"
+                  class="summary-copy"
+                >
+                  Checking WebGPU and browser storage...
+                </p>
+                <dl
+                  id="hardwareFacts"
+                  class="fact-grid"
+                ></dl>
+              </section>
 
-      <section
-        class="surface debug-panel"
-        aria-labelledby="debugTitle"
-      >
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Raw diagnostics</p>
-            <h2 id="debugTitle">Debug data</h2>
+              <section aria-labelledby="engineTitle">
+                <div class="section-heading compact">
+                  <div>
+                    <h2 id="engineTitle">Model and engine</h2>
+                  </div>
+                </div>
+                <dl
+                  id="engineFacts"
+                  class="fact-grid"
+                ></dl>
+              </section>
+            </div>
+
+            <section
+              class="diagnostic-section debug-panel"
+              aria-labelledby="eventsTitle"
+            >
+              <div class="section-heading compact">
+                <div>
+                  <h2 id="eventsTitle">Event log</h2>
+                </div>
+                <button
+                  id="clearEvents"
+                  class="button small"
+                  type="button"
+                  disabled
+                >
+                  Clear
+                </button>
+              </div>
+              <ol
+                id="eventLog"
+                class="event-log"
+              >
+                <li class="empty-copy">No request events yet.</li>
+              </ol>
+            </section>
+
+            <section
+              class="diagnostic-section"
+              aria-labelledby="generationTitle"
+            >
+              <div class="section-heading compact">
+                <div>
+                  <h2 id="generationTitle">Classification details</h2>
+                </div>
+                <button
+                  id="copyResult"
+                  class="button small"
+                  type="button"
+                  disabled
+                >
+                  Copy result
+                </button>
+              </div>
+              <div class="table-wrap">
+                <table aria-labelledby="generationTitle">
+                  <tbody id="generation">
+                    <tr>
+                      <th scope="row">State</th>
+                      <td>No result yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section
+              class="diagnostic-section"
+              aria-labelledby="debugTitle"
+            >
+              <div class="section-heading compact">
+                <div>
+                  <h2 id="debugTitle">Debug data</h2>
+                </div>
+                <button
+                  id="copyDebug"
+                  class="button small"
+                  type="button"
+                  disabled
+                >
+                  Copy all
+                </button>
+              </div>
+              <p class="summary-copy">Raw payloads are available for exact inspection.</p>
+              <details>
+                <summary>Latest result</summary>
+                <pre
+                  id="rawResult"
+                  class="json-view"
+                ><code>No result yet.</code></pre>
+              </details>
+              <details>
+                <summary>Browser capability and configuration</summary>
+                <pre
+                  id="rawCapability"
+                  class="json-view"
+                ><code>Loading...</code></pre>
+              </details>
+            </section>
           </div>
-          <button
-            id="copyDebug"
-            class="button small"
-            type="button"
-            disabled
-          >
-            Copy all
-          </button>
-        </div>
-        <p class="summary-copy">
-          Structured cards above are the primary view. Raw payloads remain available for exact
-          inspection.
-        </p>
-        <details open>
-          <summary>Latest result</summary>
-          <pre
-            id="rawResult"
-            class="json-view"
-          ><code>No result yet.</code></pre>
-        </details>
-        <details>
-          <summary>Browser capability and configuration</summary>
-          <pre
-            id="rawCapability"
-            class="json-view"
-          ><code>Loading…</code></pre>
         </details>
       </section>
     </main>
