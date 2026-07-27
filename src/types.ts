@@ -1,5 +1,3 @@
-export type SelectionShape = "rect" | "circle";
-
 export interface NormalizedSelection {
   x1: number;
   y1: number;
@@ -7,9 +5,7 @@ export interface NormalizedSelection {
   y2: number;
 }
 
-export interface Region extends NormalizedSelection {
-  shape: SelectionShape;
-}
+export type Region = NormalizedSelection;
 
 export interface InferenceConfig {
   prompt: string;
@@ -21,6 +17,7 @@ export interface InferenceConfig {
   jpegQuality: number;
   maxImageBytes: number;
   maxImagePixels: number;
+  capabilityProbeTimeoutSeconds: number;
   inferenceTimeoutSeconds: number;
   modelLoadTimeoutSeconds: number;
   resampling: string;
@@ -72,7 +69,6 @@ export interface ClassificationResult {
   label: string;
   tokenProbability: number | null;
   selection: {
-    shape: SelectionShape;
     box: number[];
   };
   crop: CropDetails;
@@ -137,4 +133,3 @@ export interface BrowserCapability {
   limits?: Record<string, number>;
   reason?: string;
 }
-

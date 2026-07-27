@@ -1,15 +1,6 @@
-import {
-  proxy,
-  releaseProxy,
-  transfer,
-  wrap,
-  type Remote,
-} from "comlink";
+import { proxy, releaseProxy, transfer, wrap } from "comlink";
 import * as v from "valibot";
-import {
-  BrowserCapabilitySchema,
-  ClassificationResultSchema,
-} from "../domain/schemas";
+import { BrowserCapabilitySchema, ClassificationResultSchema } from "../domain/schemas";
 import type {
   BrowserCapability,
   ClassificationResult,
@@ -39,6 +30,8 @@ export type WorkerConnectionFactory = (
 
 type RetainedImage = Readonly<{ file: File; descriptor: ImageDescriptor }>;
 
+const CANCELLATION_GRACE_PERIOD_MS = 1500;
+
 function errorWithName(name: string, message: string): Error {
   const error = new Error(message);
   error.name = name;
@@ -65,7 +58,9 @@ export function createComlinkConnection(
   );
 
   const remote = wrap<WorkerApi>(worker);
-  void remote.setDeviceLostListener(proxy(onDeviceLost)).catch((error) => onFailure(toError(error)));
+  void remote
+    .setDeviceLostListener(proxy(onDeviceLost))
+    .catch((error) => onFailure(toError(error)));
 
   return {
     api: remote as unknown as WorkerApi,
@@ -106,9 +101,11 @@ export class BrowserInferenceClient implements InferenceClientPort {
     return new Promise<T>((resolve, reject) => {
       const rejectPending = (error: Error) => reject(error);
       this.pendingRejectors.add(rejectPending);
-      operation.then(resolve, (error) => reject(toError(error))).finally(() => {
-        this.pendingRejectors.delete(rejectPending);
-      });
+      operation
+        .then(resolve, (error) => reject(toError(error)))
+        .finally(() => {
+          this.pendingRejectors.delete(rejectPending);
+        });
     });
   }
 
@@ -124,14 +121,30 @@ export class BrowserInferenceClient implements InferenceClientPort {
     if (notify) for (const listener of this.lifecycleListeners) listener(error);
   }
 
+  private scheduleCancellationReset(jobId: number, error: Error): void {
+    if (this.cancelFallback) clearTimeout(this.cancelFallback);
+
+    this.cancelFallback = setTimeout(() => {
+      if (this.currentJobId !== jobId) return;
+      this.hardReset(error);
+    }, CANCELLATION_GRACE_PERIOD_MS);
+  }
+
   subscribeLifecycle(listener: InferenceLifecycleListener): () => void {
     this.lifecycleListeners.add(listener);
     return () => this.lifecycleListeners.delete(listener);
   }
 
   async probe(): Promise<BrowserCapability> {
-    const value = await this.invoke(this.ensureConnection().api.probe(this.config));
-    return v.parse(BrowserCapabilitySchema, value);
+    const operation = this.invoke(this.ensureConnection().api.probe(this.config));
+    const timeout = setTimeout(() => {
+      this.hardReset(errorWithName("TimeoutError", "Browser capability check timed out"));
+    }, this.config.capabilityProbeTimeoutSeconds * 1000);
+    try {
+      return v.parse(BrowserCapabilitySchema, await operation);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async prepare(onProgress?: (event: ProgressEvent) => void): Promise<void> {
@@ -179,11 +192,10 @@ export class BrowserInferenceClient implements InferenceClientPort {
     this.currentJobId = jobId;
     const abort = () => {
       void this.connection?.api.cancel(jobId).catch(() => undefined);
-      if (this.cancelFallback) clearTimeout(this.cancelFallback);
-      this.cancelFallback = setTimeout(() => {
-        if (this.currentJobId !== jobId) return;
-        this.hardReset(errorWithName("AbortError", "Browser classification cancelled"));
-      }, 1500);
+      this.scheduleCancellationReset(
+        jobId,
+        errorWithName("AbortError", "Browser classification cancelled")
+      );
     };
     request.signal?.addEventListener("abort", abort, { once: true });
 
@@ -204,10 +216,10 @@ export class BrowserInferenceClient implements InferenceClientPort {
       );
       const timeout = setTimeout(() => {
         void this.connection?.api.cancel(jobId).catch(() => undefined);
-        this.cancelFallback = setTimeout(() => {
-          if (this.currentJobId !== jobId) return;
-          this.hardReset(errorWithName("TimeoutError", "Browser classification timed out"));
-        }, 1500);
+        this.scheduleCancellationReset(
+          jobId,
+          errorWithName("TimeoutError", "Browser classification timed out")
+        );
       }, this.config.inferenceTimeoutSeconds * 1000);
       try {
         return v.parse(ClassificationResultSchema, await operation);
@@ -257,11 +269,10 @@ export class BrowserInferenceClient implements InferenceClientPort {
     if (this.currentJobId === null || !this.connection) return;
     const jobId = this.currentJobId;
     void this.connection.api.cancel(jobId).catch(() => undefined);
-    if (this.cancelFallback) clearTimeout(this.cancelFallback);
-    this.cancelFallback = setTimeout(() => {
-      if (this.currentJobId !== jobId) return;
-      this.hardReset(errorWithName("AbortError", "Browser classification cancelled"));
-    }, 1500);
+    this.scheduleCancellationReset(
+      jobId,
+      errorWithName("AbortError", "Browser classification cancelled")
+    );
   }
 
   async dispose(): Promise<void> {

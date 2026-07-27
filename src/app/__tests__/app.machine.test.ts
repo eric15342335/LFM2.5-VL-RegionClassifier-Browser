@@ -1,5 +1,5 @@
-import { createActor, waitFor } from "xstate";
 import { describe, expect, it, vi } from "vitest";
+import { createActor, waitFor } from "xstate";
 import type { InferenceClientPort, InferenceLifecycleListener } from "../../inference/client";
 import type {
   BrowserCapability,
@@ -34,7 +34,7 @@ const result: ClassificationResult = {
   imageId: descriptor.id,
   label: "traffic light",
   tokenProbability: 0.91,
-  selection: { shape: "rect", box: [0.1, 0.2, 0.5, 0.6] },
+  selection: { box: [0.1, 0.2, 0.5, 0.6] },
   crop: {
     selectionBox: [0.1, 0.2, 0.5, 0.6],
     selectionPixels: [64, 96, 320, 288],

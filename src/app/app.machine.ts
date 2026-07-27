@@ -1,11 +1,4 @@
-import {
-  assign,
-  fromCallback,
-  fromPromise,
-  raise,
-  setup,
-  type SnapshotFrom,
-} from "xstate";
+import { assign, fromCallback, fromPromise, raise, setup, type SnapshotFrom } from "xstate";
 import { INFERENCE_CONFIG } from "../config";
 import type { InferenceClientPort } from "../inference/client";
 import type {
@@ -14,7 +7,6 @@ import type {
   ImageDescriptor,
   NormalizedSelection,
   ProgressEvent,
-  SelectionShape,
 } from "../types";
 
 export type LoadedImage = Readonly<{
@@ -46,7 +38,6 @@ type AppContext = {
   pendingFile: File | null;
   image: LoadedImage | null;
   selection: NormalizedSelection | null;
-  shape: SelectionShape;
   result: LatestResult | null;
   progress: ProgressEvent | null;
   events: ProgressEvent[];
@@ -62,7 +53,6 @@ export type AppEvent =
   | { type: "LOAD_MODEL" }
   | { type: "FILE_SELECTED"; file: File }
   | { type: "SELECTION_CHANGED"; selection: NormalizedSelection | null }
-  | { type: "SHAPE_CHANGED"; shape: SelectionShape }
   | { type: "CLASSIFY" }
   | { type: "CANCEL" }
   | { type: "CLEAR_EVENTS" }
@@ -82,7 +72,6 @@ type ClassifyInput = Readonly<{
   client: InferenceClientPort;
   imageId: string;
   selection: NormalizedSelection;
-  shape: SelectionShape;
   parent: ParentPort;
 }>;
 
@@ -122,7 +111,9 @@ async function defaultDecodeImage(
   };
 }
 
-const probeActor = fromPromise<BrowserCapability, InferenceClientPort>(({ input }) => input.probe());
+const probeActor = fromPromise<BrowserCapability, InferenceClientPort>(({ input }) =>
+  input.probe()
+);
 
 const prepareActor = fromPromise<number, PrepareInput>(async ({ input }) => {
   const started = performance.now();
@@ -152,7 +143,7 @@ const classifyActor = fromPromise<LatestResult, ClassifyInput>(async ({ input, s
   const started = performance.now();
   const result = await input.client.classify({
     imageId: input.imageId,
-    region: { ...input.selection, shape: input.shape },
+    region: input.selection,
     signal,
     onProgress: (event) => input.parent.send({ type: "PROGRESS", event }),
   });
@@ -191,8 +182,7 @@ export const appMachine = setup({
       const error = errorOf(event);
       return error instanceof Error && error.name === "AbortError";
     },
-    modelReadyProgress: ({ event }) =>
-      event.type === "PROGRESS" && event.event.stage === "ready",
+    modelReadyProgress: ({ event }) => event.type === "PROGRESS" && event.event.stage === "ready",
   },
   actions: {
     startOperation: assign({
@@ -217,19 +207,13 @@ export const appMachine = setup({
       message: () => "Decoding and retaining the image in this browser...",
     }),
     setSelection: assign({
-      selection: ({ event }) =>
-        event.type === "SELECTION_CHANGED" ? event.selection : null,
+      selection: ({ event }) => (event.type === "SELECTION_CHANGED" ? event.selection : null),
       result: () => null,
       technicalError: () => null,
       message: ({ event }) =>
         event.type === "SELECTION_CHANGED" && event.selection
           ? "Selection ready. Classify the selected region."
           : "Draw around one object.",
-    }),
-    setShape: assign({
-      shape: ({ event }) => (event.type === "SHAPE_CHANGED" ? event.shape : "rect"),
-      result: () => null,
-      technicalError: () => null,
     }),
     clearResult: assign({ result: () => null }),
     markWorkerReset: assign({
@@ -313,7 +297,6 @@ export const appMachine = setup({
     pendingFile: null,
     image: null,
     selection: null,
-    shape: "rect",
     result: null,
     progress: null,
     events: [],
@@ -345,7 +328,8 @@ export const appMachine = setup({
               capability: ({ event }) => outputOf<BrowserCapability>(event),
               message: () => "This browser cannot run the local WebGPU model.",
               technicalError: ({ event }) =>
-                outputOf<BrowserCapability>(event).reason ?? "Browser WebGPU capability check failed",
+                outputOf<BrowserCapability>(event).reason ??
+                "Browser WebGPU capability check failed",
             }),
           },
         ],
@@ -451,14 +435,16 @@ export const appMachine = setup({
           on: {
             IMAGE_REPLACED: { target: ".idle", actions: "clearResult" },
             SELECTION_CHANGED: { target: ".idle", actions: "setSelection" },
-            SHAPE_CHANGED: { target: ".idle", actions: "setShape" },
             CLASSIFY: { target: ".running", guard: "canClassify" },
           },
           states: {
             idle: { tags: ["classificationIdle"] },
             running: {
               tags: ["classifying"],
-              entry: ["startOperation", assign({ message: () => "Classifying the selected region..." })],
+              entry: [
+                "startOperation",
+                assign({ message: () => "Classifying the selected region..." }),
+              ],
               on: { CANCEL: { target: "cancelled", actions: "classificationCancelled" } },
               invoke: {
                 src: "classify",
@@ -466,7 +452,6 @@ export const appMachine = setup({
                   client: context.client,
                   imageId: context.image?.descriptor.id as string,
                   selection: context.selection as NormalizedSelection,
-                  shape: context.shape,
                   parent: self,
                 }),
                 onDone: { target: "success", actions: "classificationSucceeded" },

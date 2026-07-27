@@ -1,19 +1,31 @@
 // @vitest-environment jsdom
 import { MantineProvider } from "@mantine/core";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { InferenceClientPort } from "../../inference/client";
-import type {
-  BrowserCapability,
-  ClassificationResult,
-  ClassifyRequest,
-  ImageDescriptor,
-  ProgressEvent,
-} from "../../types";
+import type { BrowserCapability, ClassificationResult, ProgressEvent } from "../../types";
 import { App } from "../App";
 
 beforeAll(() => {
+  class ResizeObserverMock {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+
+  Object.defineProperty(window, "ResizeObserver", {
+    writable: true,
+    value: ResizeObserverMock,
+  });
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    writable: true,
+    value: ResizeObserverMock,
+  });
+  Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+    writable: true,
+    value: vi.fn(() => null),
+  });
   Object.defineProperty(window, "matchMedia", {
     writable: true,
     value: vi.fn().mockImplementation((query: string) => ({
@@ -28,6 +40,8 @@ beforeAll(() => {
     })),
   });
 });
+
+afterEach(cleanup);
 
 class UiClient implements InferenceClientPort {
   readonly name = "ui-test";
@@ -45,9 +59,9 @@ class UiClient implements InferenceClientPort {
     shaderF16: true,
   }));
   isPrepared = () => this.prepared;
-  loadImage = vi.fn(async (_file: File, _descriptor: ImageDescriptor) => undefined);
+  loadImage = vi.fn(async () => undefined);
   releaseImage = vi.fn(async () => undefined);
-  classify = vi.fn(async (_request: ClassifyRequest): Promise<ClassificationResult> => {
+  classify = vi.fn(async (): Promise<ClassificationResult> => {
     throw new Error("not used");
   });
   cancel = vi.fn();
@@ -70,7 +84,7 @@ describe("App", () => {
 
     const loadButton = await screen.findByRole("button", { name: /load model/i });
     expect(screen.getByRole("button", { name: /browse/i }).hasAttribute("disabled")).toBe(false);
-    expect(screen.getByText(/webgpu is available/i)).toBeTruthy();
+    expect(screen.getAllByText(/webgpu is available/i)).not.toHaveLength(0);
 
     await userEvent.click(loadButton);
     await waitFor(() => expect(client.prepare).toHaveBeenCalledTimes(1));

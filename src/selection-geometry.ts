@@ -1,56 +1,64 @@
-import type { NormalizedSelection, SelectionShape } from "./types";
+import type { PercentCrop } from "react-image-crop";
+import type { NormalizedSelection } from "./types";
 
-export type Point = Readonly<{ x: number; y: number }>;
-
-export type CanvasBounds = Readonly<{
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}>;
-
-export type CanvasSize = Readonly<{ width: number; height: number }>;
+export const MINIMUM_SELECTION_SPAN = 0.01;
 
 export function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
-export function canvasPointFromClient(
-  clientX: number,
-  clientY: number,
-  bounds: CanvasBounds,
-  canvas: CanvasSize
-): Point {
+function finite(value: number, name: string): number {
+  if (!Number.isFinite(value)) throw new RangeError(`${name} must be finite`);
+  return value;
+}
+
+function stable(value: number): number {
+  return Number(value.toPrecision(15));
+}
+
+export function canonicalSelection(selection: NormalizedSelection): NormalizedSelection {
+  const x1 = clamp(finite(selection.x1, "x1"), 0, 1);
+  const y1 = clamp(finite(selection.y1, "y1"), 0, 1);
+  const x2 = clamp(finite(selection.x2, "x2"), 0, 1);
+  const y2 = clamp(finite(selection.y2, "y2"), 0, 1);
   return {
-    x: clamp(((clientX - bounds.left) * canvas.width) / bounds.width, 0, canvas.width),
-    y: clamp(((clientY - bounds.top) * canvas.height) / bounds.height, 0, canvas.height),
+    x1: stable(Math.min(x1, x2)),
+    y1: stable(Math.min(y1, y2)),
+    x2: stable(Math.max(x1, x2)),
+    y2: stable(Math.max(y1, y2)),
   };
 }
 
-export function selectionEnd(start: Point, end: Point, shape: SelectionShape): Point {
-  if (shape !== "circle") return end;
-  const side = Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
+export function percentCropToNormalized(crop: PercentCrop): NormalizedSelection {
+  const x = finite(crop.x, "crop.x");
+  const y = finite(crop.y, "crop.y");
+  const width = finite(crop.width, "crop.width");
+  const height = finite(crop.height, "crop.height");
+  return canonicalSelection({
+    x1: x / 100,
+    y1: y / 100,
+    x2: (x + width) / 100,
+    y2: (y + height) / 100,
+  });
+}
+
+export function normalizedToPercentCrop(selection: NormalizedSelection): PercentCrop {
+  const normalized = canonicalSelection(selection);
   return {
-    x: start.x + Math.sign(end.x - start.x || 1) * side,
-    y: start.y + Math.sign(end.y - start.y || 1) * side,
+    unit: "%",
+    x: stable(normalized.x1 * 100),
+    y: stable(normalized.y1 * 100),
+    width: stable((normalized.x2 - normalized.x1) * 100),
+    height: stable((normalized.y2 - normalized.y1) * 100),
   };
 }
 
-export function normalizedSelection(
-  start: Point,
-  end: Point,
-  shape: SelectionShape,
-  canvas: CanvasSize
-): NormalizedSelection {
-  const final = selectionEnd(start, end, shape);
-  return {
-    x1: clamp(Math.min(start.x, final.x) / canvas.width, 0, 1),
-    y1: clamp(Math.min(start.y, final.y) / canvas.height, 0, 1),
-    x2: clamp(Math.max(start.x, final.x) / canvas.width, 0, 1),
-    y2: clamp(Math.max(start.y, final.y) / canvas.height, 0, 1),
-  };
-}
-
-export function isUsableSelection(selection: NormalizedSelection, minimumSpan = 0.01): boolean {
-  return selection.x2 - selection.x1 >= minimumSpan && selection.y2 - selection.y1 >= minimumSpan;
+export function isUsableSelection(
+  selection: NormalizedSelection,
+  minimumSpan = MINIMUM_SELECTION_SPAN
+): boolean {
+  const normalized = canonicalSelection(selection);
+  return (
+    normalized.x2 - normalized.x1 >= minimumSpan && normalized.y2 - normalized.y1 >= minimumSpan
+  );
 }

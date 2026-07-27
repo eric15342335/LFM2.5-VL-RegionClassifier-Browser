@@ -29,35 +29,89 @@ function JsonBlock({ value }: Readonly<{ value: unknown }>) {
   const text = JSON.stringify(value, null, 2);
   return (
     <Stack gap="xs">
-      <Group justify="flex-end"><CopyButton value={text}>{({ copied, copy }) => <Button size="xs" variant="subtle" onClick={copy}>{copied ? "Copied" : "Copy JSON"}</Button>}</CopyButton></Group>
-      <ScrollArea h={280}><Code block>{text}</Code></ScrollArea>
+      <Group justify="flex-end">
+        <CopyButton value={text}>
+          {({ copied, copy }) => (
+            <Button
+              size="xs"
+              variant="subtle"
+              onClick={copy}
+            >
+              {copied ? "Copied" : "Copy JSON"}
+            </Button>
+          )}
+        </CopyButton>
+      </Group>
+      <ScrollArea h={280}>
+        <Code block>{text}</Code>
+      </ScrollArea>
     </Stack>
   );
 }
 
-export function DiagnosticsPanel({ capability, events, result, technicalError, onClearEvents }: Props) {
+export function DiagnosticsPanel({
+  capability,
+  events,
+  result,
+  technicalError,
+  onClearEvents,
+}: Props) {
   return (
-    <Paper withBorder radius="lg" p="md">
+    <Paper
+      withBorder
+      radius="lg"
+      p="md"
+    >
       <Stack gap="md">
         <Group justify="space-between">
-          <Title order={2} size="h3">Diagnostics</Title>
+          <Title
+            order={2}
+            size="h3"
+          >
+            Diagnostics
+          </Title>
           <Badge variant="outline">Browser session</Badge>
         </Group>
-        <Accordion variant="separated" multiple defaultValue={technicalError ? ["error"] : []}>
+        <Accordion
+          variant="separated"
+          multiple
+          defaultValue={technicalError ? ["error"] : []}
+        >
           {technicalError && (
             <Accordion.Item value="error">
               <Accordion.Control>Technical error</Accordion.Control>
-              <Accordion.Panel><Code block>{technicalError}</Code></Accordion.Panel>
+              <Accordion.Panel>
+                <Code block>{technicalError}</Code>
+              </Accordion.Panel>
             </Accordion.Item>
           )}
           <Accordion.Item value="events">
             <Accordion.Control>Event log ({events.length})</Accordion.Control>
             <Accordion.Panel>
               <Stack gap="sm">
-                <Group justify="flex-end"><Button size="xs" variant="subtle" disabled={!events.length} onClick={onClearEvents}>Clear</Button></Group>
+                <Group justify="flex-end">
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    disabled={!events.length}
+                    onClick={onClearEvents}
+                  >
+                    Clear
+                  </Button>
+                </Group>
                 <Table.ScrollContainer minWidth={540}>
-                  <Table striped withTableBorder>
-                    <Table.Thead><Table.Tr><Table.Th>Stage</Table.Th><Table.Th>Message</Table.Th><Table.Th>Progress</Table.Th><Table.Th>Elapsed</Table.Th></Table.Tr></Table.Thead>
+                  <Table
+                    striped
+                    withTableBorder
+                  >
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Stage</Table.Th>
+                        <Table.Th>Message</Table.Th>
+                        <Table.Th>Progress</Table.Th>
+                        <Table.Th>Elapsed</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
                     <Table.Tbody>
                       {events.map((event, index) => (
                         <Table.Tr key={`${event.stage}-${event.elapsedMs}-${index}`}>
@@ -70,17 +124,28 @@ export function DiagnosticsPanel({ capability, events, result, technicalError, o
                     </Table.Tbody>
                   </Table>
                 </Table.ScrollContainer>
-                {!events.length && <Text size="sm" c="dimmed">No worker events recorded.</Text>}
+                {!events.length && (
+                  <Text
+                    size="sm"
+                    c="dimmed"
+                  >
+                    No worker events recorded.
+                  </Text>
+                )}
               </Stack>
             </Accordion.Panel>
           </Accordion.Item>
           <Accordion.Item value="capability">
             <Accordion.Control>Capability and configuration</Accordion.Control>
-            <Accordion.Panel><JsonBlock value={{ capability, config: INFERENCE_CONFIG }} /></Accordion.Panel>
+            <Accordion.Panel>
+              <JsonBlock value={{ capability, config: INFERENCE_CONFIG }} />
+            </Accordion.Panel>
           </Accordion.Item>
           <Accordion.Item value="result">
             <Accordion.Control>Raw result</Accordion.Control>
-            <Accordion.Panel><JsonBlock value={result} /></Accordion.Panel>
+            <Accordion.Panel>
+              <JsonBlock value={result} />
+            </Accordion.Panel>
           </Accordion.Item>
         </Accordion>
       </Stack>

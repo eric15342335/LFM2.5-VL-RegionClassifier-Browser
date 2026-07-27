@@ -20,6 +20,7 @@ export const INFERENCE_CONFIG: Readonly<InferenceConfig> = Object.freeze({
   jpegQuality: 88,
   maxImageBytes: 100 * 1024 * 1024,
   maxImagePixels: 40_000_000,
+  capabilityProbeTimeoutSeconds: 15,
   inferenceTimeoutSeconds: 300,
   modelLoadTimeoutSeconds: 600,
   resampling: "bilinear",

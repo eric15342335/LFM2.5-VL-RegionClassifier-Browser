@@ -5,7 +5,7 @@
 **Scope:** module boundaries, dependency plan, migration order.  
 **Files changed:** `docs/frontend-rewrite-plan.md`, final architecture documentation.  
 **Removed:** direct coupling between UI rendering, worker messages, and inference lifecycle.  
-**Libraries introduced:** React, React Compiler, XState, Mantine, Comlink, Valibot.  
+**Libraries introduced:** React, XState, Mantine, Comlink, Valibot.
 **Tests:** architecture enforced through structural audit and boundary tests.  
 **Commands:** source inventory, baseline LOC script, browser-only audit.  
 **Risk:** dependency installation could not be executed in this environment because npm registry DNS resolution failed.
@@ -56,9 +56,9 @@
 
 ## Tooling and review
 
-**Scope:** package proposal, React Compiler plugin, runtime schemas, audits, metrics, manifest checks, documentation.  
+**Scope:** package proposal, runtime schemas, audits, metrics, manifest checks, documentation.
 **Files changed:** `package.json`, `vite.config.ts`, `tsconfig.json`, scripts, README/docs, model manifest.  
 **Removed:** stale architecture references and obsolete source paths.  
-**Libraries introduced:** Valibot and React Compiler.  
+**Libraries introduced:** Valibot.
 **Commands:** structural audit, manifest verification, metrics, `git diff --check`; install/type-check attempts recorded as blocked.  
 **Risk:** lockfile regeneration, full checks, build/bundle comparison, browser accessibility audit, and release metadata completion remain open due the unavailable npm registry and incomplete upstream artifact digests.

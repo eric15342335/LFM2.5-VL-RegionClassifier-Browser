@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { INFERENCE_CONFIG } from "../config";
-import {
-  BrowserInferenceClient,
-  type WorkerConnectionFactory,
-} from "../inference/client";
+import { BrowserInferenceClient, type WorkerConnectionFactory } from "../inference/client";
 import type { WorkerApi } from "../inference/worker-api";
 import type { ClassificationResult, ImageDescriptor } from "../types";
 
@@ -22,7 +19,7 @@ function result(label = "cat"): ClassificationResult {
     imageId: descriptor.id,
     label,
     tokenProbability: 0.75,
-    selection: { shape: "rect", box: [0.1, 0.1, 0.9, 0.9] },
+    selection: { box: [0.1, 0.1, 0.9, 0.9] },
     crop: {
       selectionBox: [0.1, 0.1, 0.9, 0.9],
       selectionPixels: [1, 1, 9, 9],
@@ -125,7 +122,7 @@ describe("Comlink inference client lifecycle", () => {
     await client.loadImage(file, descriptor);
     const output = await client.classify({
       imageId: descriptor.id,
-      region: { shape: "rect", x1: 0.1, y1: 0.1, x2: 0.9, y2: 0.9 },
+      region: { x1: 0.1, y1: 0.1, x2: 0.9, y2: 0.9 },
       onProgress: (event) => progress.push(event.stage),
     });
 
@@ -156,7 +153,7 @@ describe("Comlink inference client lifecycle", () => {
 
     const operation = client.classify({
       imageId: descriptor.id,
-      region: { shape: "rect", x1: 0.1, y1: 0.1, x2: 0.9, y2: 0.9 },
+      region: { x1: 0.1, y1: 0.1, x2: 0.9, y2: 0.9 },
       signal: controller.signal,
     });
     controller.abort();
@@ -179,5 +176,28 @@ describe("Comlink inference client lifecycle", () => {
     failWorker?.(new Error("worker crashed"));
 
     await expect(operation).rejects.toThrow("worker crashed");
+  });
+
+  it("times out a capability probe that never settles", async () => {
+    vi.useFakeTimers();
+    const terminate = vi.fn();
+    const factory: WorkerConnectionFactory = () => ({
+      api: baseApi({ probe: () => new Promise(() => undefined) }),
+      terminate,
+    });
+    const client = new BrowserInferenceClient(
+      { ...INFERENCE_CONFIG, capabilityProbeTimeoutSeconds: 1 },
+      factory
+    );
+    const rejection = expect(client.probe()).rejects.toMatchObject({
+      name: "TimeoutError",
+      message: "Browser capability check timed out",
+    });
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await rejection;
+    expect(terminate).toHaveBeenCalledOnce();
+    vi.useRealTimers();
   });
 });

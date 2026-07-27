@@ -4,8 +4,8 @@
 
 - Preserve the custom Transformers.js generation path, processor parity controls, prompt construction, token slicing, score calculation, cancellation semantics, device-loss recovery, and retained-image replay.
 - Preserve selection normalization, bankers rounding, padding, masking, no-upscale resize, JPEG quality, and diagnostic payloads.
-- Adopt React, React Compiler, XState, Mantine, Comlink, and Valibot.
-- Defer `react-image-crop` until normalized-coordinate and pixel-output parity is demonstrated.
+- Adopt React, XState, Mantine, Comlink, and Valibot.
+- `react-image-crop` is adopted for rectangular interaction only; normalized-coordinate and source-pixel preprocessing remain application-owned.
 - Defer Pica until benchmark and model-output parity are demonstrated.
 - Keep Vite, TypeScript, Vitest, and the Transformers.js patch.
 

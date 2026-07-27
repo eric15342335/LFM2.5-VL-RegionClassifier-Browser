@@ -4,5 +4,5 @@ overrides:
   "@huggingface/transformers>onnxruntime-node": "-"
   "@huggingface/transformers>sharp": "-"
 patchedDependencies:
-  '@huggingface/transformers@4.2.0': patches/@huggingface__transformers@4.2.0.patch
+  "@huggingface/transformers@4.2.0": patches/@huggingface__transformers@4.2.0.patch
 savePrefix: "~"

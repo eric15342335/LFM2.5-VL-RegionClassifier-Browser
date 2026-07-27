@@ -1,6 +1,5 @@
 /// <reference lib="webworker" />
 
-import { expose } from "comlink";
 import {
   AutoModelForImageTextToText,
   AutoProcessor,
@@ -9,6 +8,7 @@ import {
   Lfm2VlImageProcessor,
   RawImage,
 } from "@huggingface/transformers";
+import { expose } from "comlink";
 import * as v from "valibot";
 import { ImageDescriptorSchema, RegionSchema } from "../domain/schemas";
 import { validateImageContainer } from "../image-format";
@@ -201,13 +201,13 @@ async function probe(config: InferenceConfig): Promise<BrowserCapability> {
 
   const capability: BrowserCapability = {
     supported: false,
-    secureContext: worker.isSecureContext,
+    secureContext: self.isSecureContext,
     hasWebgpu: "gpu" in navigator,
     adapterAcquired: false,
     deviceAcquired: false,
     shaderF16: false,
   };
-  if (!worker.isSecureContext) {
+  if (!self.isSecureContext) {
     capability.reason = "WebGPU requires HTTPS or localhost";
     return capability;
   }
@@ -725,7 +725,6 @@ async function classifyRequest(request: QueuedClassification): Promise<Classific
     label,
     tokenProbability: generation.probability,
     selection: {
-      shape: request.region.shape,
       box: [request.region.x1, request.region.y1, request.region.x2, request.region.y2],
     },
     crop: crop.details,
@@ -785,7 +784,8 @@ function enqueueClassification(request: QueuedClassification): void {
     void drainClassification(request);
     return;
   }
-  if (pendingRequest) abortQueued(pendingRequest, "Classification was superseded by a newer request");
+  if (pendingRequest)
+    abortQueued(pendingRequest, "Classification was superseded by a newer request");
   pendingRequest = request;
   progress(request.id, "queued", "Queued behind the active browser generation", 45, {
     queued_ahead: 1,

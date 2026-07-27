@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { orderedBox, pixelBox, roundHalfEven, validateRegion } from "../preprocess";
 
 const rectangle = {
-  shape: "rect" as const,
   x1: 0.8,
   y1: 0.7,
   x2: 0.2,

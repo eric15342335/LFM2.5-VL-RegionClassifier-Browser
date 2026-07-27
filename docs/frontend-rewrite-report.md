@@ -2,13 +2,13 @@
 
 ## Release status
 
-The architectural rewrite is implemented. Release qualification is **blocked** in this execution environment because npm registry DNS resolution fails (`EAI_AGAIN registry.npmjs.org`). Consequently, the dependency graph and lockfile could not be regenerated, and the full lint, type-check, Vitest, Vite build, browser accessibility, bundle, and WebGPU hardware gates could not be executed. This report distinguishes implemented work from verified release gates.
+The architectural rewrite and rectangle-only crop migration are implemented. On 2026-07-28, installation, structural audit, manifest validation, formatting, linting, type-checking, Vitest, and the Vite production build all passed. Release qualification remains open only for real-browser interaction/accessibility/WebGPU verification and final model-artifact integrity metadata.
 
 ## Architecture summary
 
-The application is now a React application compiled through the React Compiler Babel plugin and rendered with Mantine. An XState parallel machine owns capability probing, model lifecycle, image lifecycle, selection readiness, classification, cancellation, and recovery. `BrowserInferenceClient` is the main-thread lifecycle boundary around a typed Comlink worker API. Valibot validates the model manifest and data crossing worker/domain boundaries.
+The application is now a React application built by Vite and rendered with Mantine. An XState parallel machine owns capability probing, model lifecycle, image lifecycle, selection readiness, classification, cancellation, and recovery. `BrowserInferenceClient` is the main-thread lifecycle boundary around a typed Comlink worker API. Valibot validates the model manifest and data crossing worker/domain boundaries.
 
-The custom Transformers.js inference adapter and deterministic image preprocessing remain intact. The rewrite does not adopt a high-level Transformers.js pipeline, `react-image-crop`, or Pica because processing, coordinate, and pixel equivalence have not been established for those substitutions.
+The custom Transformers.js inference adapter and deterministic image preprocessing remain intact. `react-image-crop` owns only rectangular interaction; normalized-coordinate conversion and source-pixel preprocessing remain application-owned. A high-level Transformers.js pipeline and Pica are not adopted.
 
 ## Migration sequence completed
 
@@ -25,15 +25,15 @@ The custom Transformers.js inference adapter and deterministic image preprocessi
 
 ## Library-to-function replacements
 
-| Previous handwritten responsibility | Final implementation | Library/API | Result |
-| --- | --- | --- | --- |
-| Element lookup, event binding, conditional DOM rendering | Declarative component tree | React 19 | Removed the 1,196-line imperative entrypoint |
-| Static layout, controls, drop target, feedback, responsive CSS | `AppShell`, `Grid`, `Stack`, `Dropzone`, `Progress`, `Alert`, notifications | Mantine | Reduced CSS from 1,379 to 92 physical lines |
-| Mutable UI flags and derived workflow reducer | Parallel state machine, invoked actors, guards, tags, abortable services | XState 5 and `@xstate/react` | Centralized valid transitions and invalid-state prevention |
-| Worker request IDs, pending map, response envelopes, callback messages, serialized errors | Typed remote methods, proxied callbacks, transferable buffers, remote exception propagation | Comlink | Removed custom worker transport plumbing |
-| Unchecked manifest/worker boundary values | Runtime schemas and parsing | Valibot | Added explicit failure at external boundaries |
-| Ad hoc render optimization pressure | Build-time component compilation | React Compiler | Avoids hand-authored memoization by default |
-| Custom crop, mask, resize, prompt, token, and scoring behavior | Retained behind typed boundaries | Existing tested implementation | Avoided an unproven parity regression |
+| Previous handwritten responsibility                                                       | Final implementation                                                                        | Library/API                    | Result                                                     |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------ | ---------------------------------------------------------- |
+| Element lookup, event binding, conditional DOM rendering                                  | Declarative component tree                                                                  | React 19                       | Removed the 1,196-line imperative entrypoint               |
+| Static layout, controls, drop target, feedback, responsive CSS                            | `AppShell`, `Grid`, `Stack`, `Dropzone`, `Progress`, `Alert`, notifications                 | Mantine                        | Reduced CSS from 1,379 to 92 physical lines                |
+| Mutable UI flags and derived workflow reducer                                             | Parallel state machine, invoked actors, guards, tags, abortable services                    | XState 5 and `@xstate/react`   | Centralized valid transitions and invalid-state prevention |
+| Worker request IDs, pending map, response envelopes, callback messages, serialized errors | Typed remote methods, proxied callbacks, transferable buffers, remote exception propagation | Comlink                        | Removed custom worker transport plumbing                   |
+| Unchecked manifest/worker boundary values                                                 | Runtime schemas and parsing                                                                 | Valibot                        | Added explicit failure at external boundaries              |
+| Custom crop pointer, touch, focus, move, and resize interaction                           | Controlled free-form rectangular crop                                                       | react-image-crop               | Removes custom interaction behavior                        |
+| Source-pixel crop, mask, resize, prompt, token, and scoring behavior                      | Retained behind typed boundaries                                                            | Existing tested implementation | Preserves inference-sensitive processing                   |
 
 ## Files added
 
@@ -91,35 +91,30 @@ The custom Transformers.js inference adapter and deterministic image preprocessi
 - Asynchronous device-loss invalidation
 - Worker RPC recovery, retained-image replay, cancellation, failure, and termination
 - Manifest and domain schema validation
-- Existing processor controls, prompt/token construction, output parsing/scoring, latest-only scheduling, image format, normalized crop geometry, ellipse/rectangle masking, no-upscale resizing, and pixel preprocessing tests retained
+- Existing processor controls, prompt/token construction, output parsing/scoring, latest-only scheduling, image format, normalized rectangular crop geometry, no-upscale resizing, and pixel preprocessing tests retained
 - Accessibility-critical model-load and file-browse controls, status messaging, and idle cancellation state
 
 ## Validation commands and results
 
-| Command | Result |
-| --- | --- |
-| `node scripts/audit-browser-only.mjs` | Passed: React root, pinned model artifacts, and stale-boundary checks |
-| `node scripts/verify-model-manifest.mjs` | Passed structurally: 3 of 12 artifacts currently contain SHA-256 values |
-| `node scripts/measure-codebase.mjs` | Passed and generated final metrics |
-| `git diff --check` | Passed |
-| TypeScript syntax transpilation over all `.ts`/`.tsx` files | Passed for 29 files using the globally available compiler API |
-| `corepack pnpm install --frozen-lockfile=false` | Blocked by DNS: `EAI_AGAIN registry.npmjs.org` |
-| `pnpm run format:check` | Not executable without installed packages |
-| `pnpm run lint` | Not executable without installed packages |
-| `pnpm run typecheck` | Not executable with project typings unavailable |
-| `pnpm run test` | Not executable without installed packages |
-| `pnpm run build` | Not executable without installed packages |
-| Browser accessibility/WebGPU regression pass | Not executable in this environment |
+| Command                                                     | Result                                                                  |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `node scripts/audit-browser-only.mjs`                       | Passed: React root, pinned model artifacts, and stale-boundary checks   |
+| `node scripts/verify-model-manifest.mjs`                    | Passed: all 12 artifacts include exact byte lengths and SHA-256 values  |
+| `node scripts/measure-codebase.mjs`                         | Passed and generated final metrics                                      |
+| `git diff --check`                                          | Passed                                                                  |
+| TypeScript syntax transpilation over all `.ts`/`.tsx` files | Passed for 29 files using the globally available compiler API           |
+| `pnpm run check`                                            | Passed: format, lint, type-check, 31 Vitest tests, and production build |
+| Browser pointer/touch/keyboard/accessibility/WebGPU checks  | Blocked: no browser is attached to the available browser runtime        |
 
 ## LOC comparison
 
-| Metric | Before | After | Change |
-| --- | ---: | ---: | ---: |
-| Production physical LOC | 5,117 | 3,348 | -1,769 (-34.6%) |
-| Production nonblank LOC | 4,645 | 3,116 | -1,529 (-32.9%) |
-| TypeScript/TSX physical LOC | 3,213 | 3,246 | +33 (+1.0%) |
-| CSS physical LOC | 1,379 | 88 | -1,291 (-93.6%) |
-| HTML physical LOC | 525 | 14 | -511 (-97.3%) |
+| Metric                      | Before | After |          Change |
+| --------------------------- | -----: | ----: | --------------: |
+| Production physical LOC     |  5,117 | 3,348 | -1,769 (-34.6%) |
+| Production nonblank LOC     |  4,645 | 3,116 | -1,529 (-32.9%) |
+| TypeScript/TSX physical LOC |  3,213 | 3,246 |     +33 (+1.0%) |
+| CSS physical LOC            |  1,379 |    88 | -1,291 (-93.6%) |
+| HTML physical LOC           |    525 |    14 |   -511 (-97.3%) |
 
 The small TypeScript increase replaces a substantially larger amount of HTML/CSS and imperative orchestration while adding explicit workflow and boundary tests. Test and documentation LOC are excluded from production metrics.
 
@@ -139,7 +134,7 @@ Runtime:
 
 Development:
 
-- React Compiler and Vite React plugin
+- Vite React plugin
 - React type packages
 - Testing Library and `user-event`
 - jsdom
@@ -152,35 +147,31 @@ No installed inference dependency was removed. `@ianvs/prettier-plugin-sort-impo
 
 ## Known limitations and blocked gates
 
-1. `pnpm-lock.yaml` was not regenerated and does not yet represent the rewritten `package.json`.
-2. Full formatting, lint, type-check, Vitest, and production-build verification has not run.
-3. Bundle size, startup timing, memory use, and real WebGPU performance have not been measured.
-4. Real-browser keyboard, screen-reader, canvas, and responsive visual checks have not run.
-5. The three large model shards have upstream SHA-256 values, but nine smaller artifacts still lack exact byte and digest metadata; manifest integrity remains pending.
-6. `react-image-crop` and Pica remain deferred until coordinate and pixel-output equivalence benchmarks are available.
+1. Browser pointer, touch, keyboard, focus, responsive-alignment, accessibility-tree, optimized-build, image-replacement, worker-restart, and WebGPU checks have not run because no browser is attached to the available browser runtime.
+2. No baseline production bundle is available for comparison.
 
 ## Deferred opportunities
 
-- **`react-image-crop`:** deferred because the current interaction uses normalized rectangle/ellipse semantics and keyboard percentage editing. Replacement requires golden coordinate conversion tests and browser interaction parity.
+- **`react-image-crop`:** adopted at `~11.1.2` for the rectangle-only UI. Percentage-to-normalized conversion is tested independently and inference preprocessing remains outside the interaction library.
 - **Pica:** deferred because the current no-upscale bilinear output is inference-sensitive. Adoption requires pixel diff thresholds and output-score parity benchmarks.
 - **High-level Transformers.js pipeline:** rejected for this migration because it would obscure processor controls, custom prompt/token construction, scoring, cancellation checkpoints, diagnostics, warm-up, and device-loss behavior.
 - **End-to-end browser tests:** deferred only because dependencies and a suitable WebGPU browser/runtime were unavailable here; they remain mandatory before release.
 
 ## Completion-criteria check
 
-| Criterion | Status | Evidence / remaining work |
-| --- | --- | --- |
-| 1. Build, type-check, lint, tests pass | **Blocked** | Registry DNS prevented installation and execution |
-| 2. Behavior covered by parity tests | **Partially verified** | Suites authored/retained; execution blocked |
-| 3. No unjustified temporary migration layer | **Checked** | Old UI, reducer, engine, and protocol deleted |
-| 4. Superseded DOM/CSS/protocol/state/utilities deleted | **Checked** | Listed deletions and stale-reference audit |
-| 5. Runtime errors/cancellation propagate | **Implemented; execution blocked** | Comlink client, hard-reset fallback, XState abort flow, tests authored |
-| 6. Accessibility/keyboard behavior verified | **Partially verified** | Accessible implementation/tests authored; browser audit blocked |
-| 7. Bundle/performance not materially regressed | **Blocked** | No baseline build and no install |
-| 8. Production LOC substantially lower | **Checked** | Physical production LOC reduced 34.6% |
-| 9. Final dependency set justified | **Checked** | Replacement table and retained/deferred rationale above |
-| 10. Final architecture/release docs present | **Checked** | README and `docs/` architecture/release documents |
-| 11. No stale references or unverified metadata | **Partial** | Source references audited; 9 manifest hashes and lockfile remain unresolved |
+| Criterion                                              | Status                   | Evidence / remaining work                                                |
+| ------------------------------------------------------ | ------------------------ | ------------------------------------------------------------------------ |
+| 1. Build, type-check, lint, tests pass                 | **Passed**               | `pnpm run check` passed on 2026-07-28                                    |
+| 2. Behavior covered by parity tests                    | **Partially verified**   | Unit characterization passes; real-browser and WebGPU parity remain open |
+| 3. No unjustified temporary migration layer            | **Checked**              | Old UI, reducer, engine, and protocol deleted                            |
+| 4. Superseded DOM/CSS/protocol/state/utilities deleted | **Checked**              | Listed deletions and stale-reference audit                               |
+| 5. Runtime errors/cancellation propagate               | **Passed in unit tests** | Comlink client, hard-reset fallback, XState abort flow                   |
+| 6. Accessibility/keyboard behavior verified            | **Blocked**              | No browser is attached to the available browser runtime                  |
+| 7. Bundle/performance not materially regressed         | **Blocked**              | No baseline build and no install                                         |
+| 8. Production LOC substantially lower                  | **Checked**              | Physical production LOC reduced 34.6%                                    |
+| 9. Final dependency set justified                      | **Checked**              | Replacement table and retained/deferred rationale above                  |
+| 10. Final architecture/release docs present            | **Checked**              | README and `docs/` architecture/release documents                        |
+| 11. No stale references or unverified metadata         | **Passed**               | Source references audited; all manifest artifact hashes are present      |
 
 The repository must not be released until every blocked or partial criterion above is closed in an environment with package registry access and WebGPU browser coverage.
 

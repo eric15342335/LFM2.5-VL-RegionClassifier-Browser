@@ -10,11 +10,12 @@ A static, browser-only selected-region image classifier. Image decoding, croppin
 
 ## Application architecture
 
-- **React + React Compiler:** component shell and render optimization
+- **React:** component shell and render optimization
 - **Mantine:** layout, controls, drop zone, progress, feedback, responsive behavior, and accessible primitives
 - **XState:** capability, model, image, classification, cancellation, and recovery workflows
 - **Comlink:** typed Web Worker RPC, callback proxies, transferables, and remote errors
 - **Valibot:** runtime validation at manifest and worker boundaries
+- **react-image-crop:** accessible free-form rectangular selection interaction, stored as normalized coordinates
 - **Transformers.js WebGPU adapter:** preserved custom processor, generation, scoring, diagnostics, cancellation, warm-up, and device-loss behavior
 
 The main thread retains the original `File` and decoded `ImageBitmap`. The worker receives image bytes once, then subsequent classifications send only an image identifier and normalized selection coordinates. An unexpected inference failure permits one worker rebuild and retained-image replay.
@@ -23,9 +24,9 @@ See `docs/browser-inference.md` for the runtime contract and `docs/frontend-rewr
 
 ## Model profile
 
-`model-manifest.json` pins `onnx-community/LFM2.5-VL-450M-ONNX` to commit `3e0c8bb3b2268ffa7b30dba6a3c2d1985d87fb14` with FP16 embeddings, an FP16 vision encoder, and a Q4F16 merged decoder. The selected large data shards total approximately 573 MB; configuration, tokenizer, processor, and graph files add a small amount beyond that estimate.
+`model-manifest.json` pins `onnx-community/LFM2.5-VL-450M-ONNX` to commit `3e0c8bb3b2268ffa7b30dba6a3c2d1985d87fb14` with FP16 embeddings, an FP16 vision encoder, and a Q4F16 merged decoder. The verified download total is 576,645,711 bytes.
 
-The repository-published SHA-256 values for the three large data shards are recorded. Exact lengths and SHA-256 values for every remaining artifact are still required before changing `integrity_status` to `verified`.
+Every pinned artifact records an exact byte length and SHA-256 value; `integrity_status` is `verified`.
 
 ## Development
 

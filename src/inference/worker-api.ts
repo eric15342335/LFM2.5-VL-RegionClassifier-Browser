@@ -27,11 +27,7 @@ export type WorkerStatus = Readonly<{
 
 export interface WorkerApi {
   probe(config: InferenceConfig): Promise<BrowserCapability>;
-  prepare(
-    config: InferenceConfig,
-    warmup: boolean,
-    onProgress?: ProgressListener
-  ): Promise<void>;
+  prepare(config: InferenceConfig, warmup: boolean, onProgress?: ProgressListener): Promise<void>;
   loadImage(
     descriptor: ImageDescriptor,
     bytes: ArrayBuffer,

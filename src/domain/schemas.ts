@@ -5,14 +5,11 @@ const normalizedNumber = v.pipe(finiteNumber, v.minValue(0), v.maxValue(1));
 const numericRecord = v.record(v.string(), finiteNumber);
 const unknownRecord = v.record(v.string(), v.unknown());
 
-export const SelectionShapeSchema = v.picklist(["rect", "circle"]);
-
 export const RegionSchema = v.object({
   x1: normalizedNumber,
   y1: normalizedNumber,
   x2: normalizedNumber,
   y2: normalizedNumber,
-  shape: SelectionShapeSchema,
 });
 
 export const ImageDescriptorSchema = v.object({
@@ -92,7 +89,6 @@ export const ClassificationResultSchema = v.object({
   label: v.string(),
   tokenProbability: v.nullable(finiteNumber),
   selection: v.object({
-    shape: SelectionShapeSchema,
     box: v.array(finiteNumber),
   }),
   crop: CropDetailsSchema,

@@ -11,15 +11,26 @@ import {
   Title,
 } from "@mantine/core";
 import { useEffect, useRef } from "react";
-import type { LoadedImage, LatestResult } from "./app.machine";
+import type { LatestResult, LoadedImage } from "./app.machine";
 import { formatBytes, formatDuration, formatPercent } from "./format";
 
 type Props = Readonly<{ result: LatestResult | null; image: LoadedImage | null }>;
 
 function Metric({ label, value }: Readonly<{ label: string; value: string }>) {
   return (
-    <Paper withBorder p="sm" radius="md">
-      <Text size="xs" c="dimmed" tt="uppercase" fw={700}>{label}</Text>
+    <Paper
+      withBorder
+      p="sm"
+      radius="md"
+    >
+      <Text
+        size="xs"
+        c="dimmed"
+        tt="uppercase"
+        fw={700}
+      >
+        {label}
+      </Text>
       <Text fw={700}>{value}</Text>
     </Paper>
   );
@@ -31,7 +42,8 @@ export function ResultPanel({ result, image }: Props) {
   useEffect(() => {
     const canvas = previewRef.current;
     if (!canvas || !result || !image) return;
-    const [left = 0, top = 0, right = image.bitmap.width, bottom = image.bitmap.height] = result.crop.cropPixels;
+    const [left = 0, top = 0, right = image.bitmap.width, bottom = image.bitmap.height] =
+      result.crop.cropPixels;
     const width = Math.max(1, right - left);
     const height = Math.max(1, bottom - top);
     const scale = Math.min(1, 640 / width, 360 / height);
@@ -42,41 +54,113 @@ export function ResultPanel({ result, image }: Props) {
   }, [image, result]);
 
   return (
-    <Paper withBorder radius="lg" p="md" h="100%">
+    <Paper
+      withBorder
+      radius="lg"
+      p="md"
+      h="100%"
+    >
       <Stack gap="md">
         <Group justify="space-between">
-          <Title order={2} size="h3">Result</Title>
+          <Title
+            order={2}
+            size="h3"
+          >
+            Result
+          </Title>
           <Badge variant="light">Local WebGPU</Badge>
         </Group>
         {!result ? (
-          <Stack align="center" justify="center" className="result-empty" gap="xs">
-            <ThemeIcon size="xl" radius="xl" variant="light">?</ThemeIcon>
+          <Stack
+            align="center"
+            justify="center"
+            className="result-empty"
+            gap="xs"
+          >
+            <ThemeIcon
+              size="xl"
+              radius="xl"
+              variant="light"
+            >
+              ?
+            </ThemeIcon>
             <Text fw={600}>No classification yet</Text>
-            <Text size="sm" c="dimmed" ta="center">Load the model, choose an image, and select one subject.</Text>
+            <Text
+              size="sm"
+              c="dimmed"
+              ta="center"
+            >
+              Load the model, choose an image, and select one subject.
+            </Text>
           </Stack>
         ) : (
           <Stack gap="md">
             <Box>
-              <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Detected subject</Text>
+              <Text
+                size="xs"
+                c="dimmed"
+                tt="uppercase"
+                fw={700}
+              >
+                Detected subject
+              </Text>
               <Title order={3}>{result.label}</Title>
-              <Text size="sm" c="dimmed">Raw generation: {result.generation.rawOutput || "—"}</Text>
+              <Text
+                size="sm"
+                c="dimmed"
+              >
+                Raw generation: {result.generation.rawOutput || "—"}
+              </Text>
             </Box>
-            <canvas ref={previewRef} className="crop-preview" aria-label="Selected crop preview" />
+            <canvas
+              ref={previewRef}
+              className="crop-preview"
+              aria-label="Selected crop preview"
+            />
             <SimpleGrid cols={{ base: 2, sm: 4 }}>
-              <Metric label="Token confidence" value={formatPercent(result.tokenProbability)} />
-              <Metric label="Round trip" value={formatDuration(result.browser.roundTripMs)} />
-              <Metric label="WebGPU inference" value={formatDuration(result.performance.webgpuInferenceMs)} />
-              <Metric label="Encoded crop" value={formatBytes(result.performance.encodedJpegBytes)} />
+              <Metric
+                label="Token confidence"
+                value={formatPercent(result.tokenProbability)}
+              />
+              <Metric
+                label="Round trip"
+                value={formatDuration(result.browser.roundTripMs)}
+              />
+              <Metric
+                label="WebGPU inference"
+                value={formatDuration(result.performance.webgpuInferenceMs)}
+              />
+              <Metric
+                label="Encoded crop"
+                value={formatBytes(result.performance.encodedJpegBytes)}
+              />
             </SimpleGrid>
             <Table.ScrollContainer minWidth={420}>
-              <Table striped withTableBorder>
+              <Table
+                striped
+                withTableBorder
+              >
                 <Table.Tbody>
-                  <Table.Tr><Table.Th>Selection shape</Table.Th><Table.Td>{result.selection.shape}</Table.Td></Table.Tr>
-                  <Table.Tr><Table.Th>Source size</Table.Th><Table.Td>{result.crop.sourceSize.join(" × ")}</Table.Td></Table.Tr>
-                  <Table.Tr><Table.Th>Crop pixels</Table.Th><Table.Td>{result.crop.cropPixels.join(", ")}</Table.Td></Table.Tr>
-                  <Table.Tr><Table.Th>Model image</Table.Th><Table.Td>{result.crop.modelImageSize.join(" × ")}</Table.Td></Table.Tr>
-                  <Table.Tr><Table.Th>Selected source area</Table.Th><Table.Td>{formatPercent(result.crop.selectedFractionOfSource)}</Table.Td></Table.Tr>
-                  <Table.Tr><Table.Th>Finish reason</Table.Th><Table.Td>{result.generation.finishReason ?? "—"}</Table.Td></Table.Tr>
+                  <Table.Tr>
+                    <Table.Th>Source size</Table.Th>
+                    <Table.Td>{result.crop.sourceSize.join(" × ")}</Table.Td>
+                  </Table.Tr>
+                  <Table.Tr>
+                    <Table.Th>Crop pixels</Table.Th>
+                    <Table.Td>{result.crop.cropPixels.join(", ")}</Table.Td>
+                  </Table.Tr>
+                  <Table.Tr>
+                    <Table.Th>Model image</Table.Th>
+                    <Table.Td>{result.crop.modelImageSize.join(" × ")}</Table.Td>
+                  </Table.Tr>
+                  <Table.Tr>
+                    <Table.Th>Selected source area</Table.Th>
+                    <Table.Td>{formatPercent(result.crop.selectedFractionOfSource)}</Table.Td>
+                  </Table.Tr>
+                  <Table.Tr>
+                    <Table.Th>Finish reason</Table.Th>
+                    <Table.Td>{result.generation.finishReason ?? "—"}</Table.Td>
+                  </Table.Tr>
                 </Table.Tbody>
               </Table>
             </Table.ScrollContainer>

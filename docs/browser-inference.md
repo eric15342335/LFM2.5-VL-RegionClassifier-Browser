@@ -31,9 +31,9 @@ Valibot validates the model manifest at startup, image descriptors and regions a
 
 ## Parity-sensitive processing
 
-The rewrite intentionally preserves the existing custom inference adapter and preprocessing implementation. Characterization tests cover normalized selection geometry, rectangle and ellipse masking, no-upscale bilinear resizing, JPEG preparation, processor controls, prompt/token construction, output parsing, score extraction, cancellation, latest-only scheduling, device loss, and retained-image recovery.
+The rewrite preserves the custom inference adapter and preprocessing implementation. `react-image-crop` owns only free-form rectangular pointer, touch, resize, move, and keyboard interaction. The application keeps normalized coordinates as the authoritative state and derives percentage crops for the UI; no rendered-pixel coordinates are persisted. A selection is retained when the user clicks outside it, may touch every image edge, and must span at least 1% on both axes before it can be classified. There is no automatic region after image load; the full image is not classified when no region exists. Users can clear a region by applying zero-width or zero-height coordinates; accidental outside clicks never clear it.
 
-`react-image-crop` and Pica are not included. The audit identified them as conditional candidates, but replacing the current canvas geometry or browser resizer without pixel and coordinate equivalence would weaken deterministic parity.
+Characterization tests cover normalized rectangle conversion, rectangular masking, no-upscale bilinear resizing, JPEG preparation, processor controls, prompt/token construction, output parsing, score extraction, cancellation, latest-only scheduling, device loss, and retained-image recovery. The interaction library is not used for source-pixel extraction, masking, resizing, tensor construction, or inference.
 
 ## Failure and recovery rules
 
@@ -47,4 +47,4 @@ The rewrite intentionally preserves the existing custom inference adapter and pr
 
 `node scripts/audit-browser-only.mjs` rejects stale imperative UI/worker protocol paths, server routes, unpinned model URLs, and inconsistent verified manifest metadata.
 
-`node scripts/verify-model-manifest.mjs` verifies the local manifest structure. The three large weight shards have repository-published SHA-256 values; the remaining small graph/configuration artifacts still require exact byte and digest capture before `integrity_status` can be changed to `verified`.
+`node scripts/verify-model-manifest.mjs` verifies the local manifest structure. Every pinned artifact records an exact byte length and SHA-256 value, and the manifest has `integrity_status: "verified"`.
