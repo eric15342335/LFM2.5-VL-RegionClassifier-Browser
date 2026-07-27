@@ -25,6 +25,8 @@ body {
   display: block;
   max-width: 100%;
   max-height: 70vh;
+  touch-action: none;
+  user-select: none;
 }
 
 /* stylelint-disable selector-class-pattern -- react-image-crop library selectors */

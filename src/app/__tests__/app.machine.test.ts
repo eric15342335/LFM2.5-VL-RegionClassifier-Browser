@@ -185,6 +185,25 @@ describe("appMachine", () => {
     actor.stop();
   });
 
+  it("classifies automatically when a selection gesture completes", async () => {
+    const { actor } = await startOperational();
+    actor.send({ type: "LOAD_MODEL" });
+    actor.send({ type: "FILE_SELECTED", file: file() });
+    await waitFor(
+      actor,
+      (snapshot) => snapshot.hasTag("modelReady") && snapshot.hasTag("imageReady")
+    );
+
+    actor.send({
+      type: "SELECTION_COMPLETED",
+      selection: { x1: 0.1, y1: 0.2, x2: 0.5, y2: 0.6 },
+    });
+
+    await waitFor(actor, (snapshot) => snapshot.hasTag("classificationSuccess"));
+    expect(actor.getSnapshot().context.result?.label).toBe("traffic light");
+    actor.stop();
+  });
+
   it("cancels an active classification through the invoked actor signal", async () => {
     const { actor, client } = await startOperational();
     client.classifyImpl = (request) =>

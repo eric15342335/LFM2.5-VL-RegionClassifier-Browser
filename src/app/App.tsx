@@ -17,9 +17,8 @@ import {
 import { Dropzone } from "@mantine/dropzone";
 import { notifications } from "@mantine/notifications";
 import { useMachine } from "@xstate/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { INFERENCE_CONFIG } from "../config";
-import { estimateDownloadProgress } from "../download-progress";
 import { BrowserInferenceClient, type InferenceClientPort } from "../inference/client";
 import { appMachine, primaryActionFor } from "./app.machine";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
@@ -104,15 +103,6 @@ export function App({ inferenceClient }: Readonly<{ inferenceClient?: InferenceC
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [send, snapshot]);
-
-  const downloadProgress = useMemo(() => {
-    const detail = context.progress?.detail;
-    if (!detail) return null;
-    const downloaded = Number(detail.downloaded_bytes);
-    const predicted = Number(detail.predicted_bytes);
-    if (!Number.isFinite(downloaded) || !Number.isFinite(predicted)) return null;
-    return estimateDownloadProgress(downloaded, predicted, context.progress?.elapsedMs ?? elapsed);
-  }, [context.progress, elapsed]);
 
   const acceptFile = (file: File) => send({ type: "FILE_SELECTED", file });
 
@@ -262,16 +252,6 @@ export function App({ inferenceClient }: Readonly<{ inferenceClient?: InferenceC
                     >
                       {context.message}
                     </Text>
-                    {downloadProgress && (
-                      <Text
-                        size="xs"
-                        c="dimmed"
-                      >
-                        {formatBytes(downloadProgress.downloadedBytes)} /{" "}
-                        {formatBytes(downloadProgress.predictedBytes)} ·{" "}
-                        {downloadProgress.percentage.toFixed(1)}%
-                      </Text>
-                    )}
                     <Group grow>
                       <Button
                         onClick={runPrimaryAction}
@@ -326,6 +306,9 @@ export function App({ inferenceClient }: Readonly<{ inferenceClient?: InferenceC
                   coordinatesOpen={coordinatesOpen}
                   onCoordinatesOpenChange={setCoordinatesOpen}
                   onSelectionChange={(selection) => send({ type: "SELECTION_CHANGED", selection })}
+                  onSelectionComplete={(selection) =>
+                    send({ type: "SELECTION_COMPLETED", selection })
+                  }
                 />
               </Grid.Col>
               <Grid.Col span={{ base: 12, lg: 4 }}>
