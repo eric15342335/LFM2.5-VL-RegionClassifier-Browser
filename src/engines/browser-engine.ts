@@ -1,10 +1,10 @@
 import type {
+  BrowserCapability,
   ClassificationResult,
   ClassifyRequest,
-  InferenceConfig,
   ImageDescriptor,
+  InferenceConfig,
   InferenceEngine,
-  BrowserCapability,
   ProgressEvent,
   WorkerRequest,
   WorkerResponse,
@@ -39,9 +39,15 @@ export class BrowserInferenceEngine implements InferenceEngine {
       type: "module",
       name: "lfm-browser-inference",
     });
-    worker.addEventListener("message", (message: MessageEvent<WorkerResponse>) => this.onMessage(message.data));
-    worker.addEventListener("error", (event) => this.failAll(new Error(event.message || "Browser inference worker failed")));
-    worker.addEventListener("messageerror", () => this.failAll(new Error("Browser inference worker returned an unreadable response")));
+    worker.addEventListener("message", (message: MessageEvent<WorkerResponse>) =>
+      this.onMessage(message.data)
+    );
+    worker.addEventListener("error", (event) =>
+      this.failAll(new Error(event.message || "Browser inference worker failed"))
+    );
+    worker.addEventListener("messageerror", () =>
+      this.failAll(new Error("Browser inference worker returned an unreadable response"))
+    );
     this.worker = worker;
     return worker;
   }
@@ -82,11 +88,15 @@ export class BrowserInferenceEngine implements InferenceEngine {
   private call<T>(
     request: WorkerCommand,
     onProgress?: (event: ProgressEvent) => void,
-    transfer: Transferable[] = [],
+    transfer: Transferable[] = []
   ): Promise<T> {
     const id = this.nextRequestId++;
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: (value) => resolve(value as T), reject, onProgress });
+      this.pending.set(id, {
+        resolve: (value) => resolve(value as T),
+        reject,
+        onProgress,
+      });
       this.ensureWorker().postMessage({ ...request, id } as WorkerRequest, transfer);
     });
   }
@@ -98,7 +108,7 @@ export class BrowserInferenceEngine implements InferenceEngine {
   async prepare(onProgress?: (event: ProgressEvent) => void): Promise<void> {
     const operation = this.call<boolean>(
       { type: "PREPARE", config: this.config, warmup: true },
-      onProgress,
+      onProgress
     );
     const timeout = window.setTimeout(() => {
       const error = new Error("Browser model loading timed out");
@@ -122,7 +132,9 @@ export class BrowserInferenceEngine implements InferenceEngine {
     if (signal?.aborted) {
       throw signal.reason ?? new DOMException("Image loading cancelled", "AbortError");
     }
-    await this.call({ type: "LOAD_IMAGE", descriptor, bytes, config: this.config }, undefined, [bytes]);
+    await this.call({ type: "LOAD_IMAGE", descriptor, bytes, config: this.config }, undefined, [
+      bytes,
+    ]);
     this.images.set(descriptor.id, { file, descriptor });
   }
 
@@ -149,7 +161,7 @@ export class BrowserInferenceEngine implements InferenceEngine {
           config: this.config,
           jobId,
         },
-        request.onProgress,
+        request.onProgress
       );
       const timeout = window.setTimeout(() => {
         void this.call({ type: "CANCEL", jobId }).catch(() => undefined);
@@ -188,14 +200,17 @@ export class BrowserInferenceEngine implements InferenceEngine {
     try {
       return await this.classifyOnce(request);
     } catch (error) {
-      if (request.signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
+      if (request.signal?.aborted || (error instanceof Error && error.name === "AbortError"))
+        throw error;
       request.onProgress?.({
         event: "status",
         stage: "recovery",
         message: "Browser inference failed; rebuilding the WebGPU session once",
         progress: 5,
         elapsedMs: 0,
-        detail: { error: error instanceof Error ? error.message : String(error) },
+        detail: {
+          error: error instanceof Error ? error.message : String(error),
+        },
       });
       await this.rebuild(request.onProgress);
       return this.classifyOnce(request);

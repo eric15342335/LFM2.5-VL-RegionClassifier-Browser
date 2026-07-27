@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-
 import { detectImageFormat, imageFrameCount, validateImageContainer } from "../image-format";
 
 const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
@@ -32,26 +31,8 @@ function animatedPng(): Uint8Array {
 
 function animatedWebp(): Uint8Array {
   return Uint8Array.from([
-    0x52,
-    0x49,
-    0x46,
-    0x46,
-    0x04,
-    0x00,
-    0x00,
-    0x00,
-    0x57,
-    0x45,
-    0x42,
-    0x50,
-    0x41,
-    0x4e,
-    0x49,
-    0x4d,
-    0x00,
-    0x00,
-    0x00,
-    0x00,
+    0x52, 0x49, 0x46, 0x46, 0x04, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x41, 0x4e, 0x49, 0x4d,
+    0x00, 0x00, 0x00, 0x00,
   ]);
 }
 
@@ -64,10 +45,10 @@ describe("image container validation", () => {
 
   it("rejects unknown and GIF input", () => {
     expect(() => validateImageContainer(new Uint8Array([0x00, 0x01]))).toThrow(
-      "JPEG, PNG, or WebP",
+      "JPEG, PNG, or WebP"
     );
     expect(() => validateImageContainer(new TextEncoder().encode("GIF89a"))).toThrow(
-      "JPEG, PNG, or WebP",
+      "JPEG, PNG, or WebP"
     );
   });
 

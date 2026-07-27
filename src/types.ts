@@ -29,7 +29,8 @@ export interface InferenceConfig {
 }
 
 export interface ModelArtifact {
-  role: "configuration" | "tokenizer" | "processor" | "embedding" | "vision" | "decoder" | "license";
+  role:
+    "configuration" | "tokenizer" | "processor" | "embedding" | "vision" | "decoder" | "license";
   path: string;
   dtype?: "fp16" | "q4f16";
   expected_bytes?: number;
@@ -174,13 +175,24 @@ export type WorkerRequest =
       config: InferenceConfig;
     }
   | { id: number; type: "RELEASE_IMAGE"; imageId: string }
-  | { id: number; type: "CLASSIFY"; imageId: string; region: Region; config: InferenceConfig; jobId: number }
+  | {
+      id: number;
+      type: "CLASSIFY";
+      imageId: string;
+      region: Region;
+      config: InferenceConfig;
+      jobId: number;
+    }
   | { id: number; type: "CANCEL"; jobId?: number }
   | { id: number; type: "GET_STATUS" }
   | { id: number; type: "DISPOSE" };
 
 export type WorkerResponse =
   | { id: number; type: "RESULT"; value: unknown }
-  | { id: number; type: "ERROR"; error: { name: string; message: string; stack?: string } }
+  | {
+      id: number;
+      type: "ERROR";
+      error: { name: string; message: string; stack?: string };
+    }
   | { id: number; type: "PROGRESS"; event: ProgressEvent }
   | { id: number; type: "DEVICE_LOST"; reason: string };

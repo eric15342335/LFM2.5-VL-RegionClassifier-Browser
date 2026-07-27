@@ -1,5 +1,4 @@
 import manifestJson from "../model-manifest.json";
-
 import type { InferenceConfig, ModelManifest } from "./types";
 
 const model = manifestJson as ModelManifest;

@@ -1,4 +1,4 @@
-import type { InferenceConfig, CropDetails, Region } from "./types";
+import type { CropDetails, InferenceConfig, Region } from "./types";
 
 export interface DecodedImage {
   width: number;
@@ -55,7 +55,7 @@ export function pixelBox(
   region: Region,
   imageWidth: number,
   imageHeight: number,
-  padding = 0,
+  padding = 0
 ): [number, number, number, number] {
   const [left, top, right, bottom] = orderedBox(region);
   const width = (right - left) * imageWidth;
@@ -84,7 +84,7 @@ function averageRgb(rgba: Uint8ClampedArray): [number, number, number] {
 
 function extractCrop(
   image: DecodedImage,
-  box: [number, number, number, number],
+  box: [number, number, number, number]
 ): Uint8ClampedArray {
   const [left, top, right, bottom] = box;
   const width = right - left;
@@ -98,11 +98,7 @@ function extractCrop(
   return output;
 }
 
-function ellipseContains(
-  x: number,
-  y: number,
-  box: [number, number, number, number],
-): boolean {
+function ellipseContains(x: number, y: number, box: [number, number, number, number]): boolean {
   const [left, top, right, bottom] = box;
   const radiusX = Math.max((right - left) / 2, Number.EPSILON);
   const radiusY = Math.max((bottom - top) / 2, Number.EPSILON);
@@ -118,7 +114,7 @@ function isolateSelection(
   width: number,
   height: number,
   region: Region,
-  localBox: [number, number, number, number],
+  localBox: [number, number, number, number]
 ): number {
   const background = averageRgb(cropRgba);
   let selectedPixels = 0;
@@ -144,11 +140,20 @@ function isolateSelection(
   return selectedPixels;
 }
 
+function toCanvasImageData(rgba: Uint8ClampedArray, width: number, height: number): ImageData {
+  // ImageData requires an ArrayBuffer-backed view. Copying also prevents a caller's
+  // SharedArrayBuffer-backed view from being retained by the canvas implementation.
+  return new ImageData(new Uint8ClampedArray(rgba), width, height);
+}
+
 function rgbaToCanvas(rgba: Uint8ClampedArray, width: number, height: number): OffscreenCanvas {
   const canvas = new OffscreenCanvas(width, height);
-  const context = canvas.getContext("2d", { alpha: false, willReadFrequently: false });
+  const context = canvas.getContext("2d", {
+    alpha: false,
+    willReadFrequently: false,
+  });
   if (!context) throw new Error("2D canvas is unavailable");
-  context.putImageData(new ImageData(rgba, width, height), 0, 0);
+  context.putImageData(toCanvasImageData(rgba, width, height), 0, 0);
   return canvas;
 }
 
@@ -158,24 +163,30 @@ async function resizeAndEncode(
   sourceHeight: number,
   targetWidth: number,
   targetHeight: number,
-  jpegQuality: number,
+  jpegQuality: number
 ): Promise<{ rgba: Uint8ClampedArray; blob: Blob }> {
   const sourceCanvas = rgbaToCanvas(rgba, sourceWidth, sourceHeight);
   const targetCanvas = new OffscreenCanvas(targetWidth, targetHeight);
-  const context = targetCanvas.getContext("2d", { alpha: false, willReadFrequently: true });
+  const context = targetCanvas.getContext("2d", {
+    alpha: false,
+    willReadFrequently: true,
+  });
   if (!context) throw new Error("2D canvas is unavailable");
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "low";
   context.drawImage(sourceCanvas, 0, 0, sourceWidth, sourceHeight, 0, 0, targetWidth, targetHeight);
   const resized = context.getImageData(0, 0, targetWidth, targetHeight).data;
-  const blob = await targetCanvas.convertToBlob({ type: "image/jpeg", quality: jpegQuality / 100 });
+  const blob = await targetCanvas.convertToBlob({
+    type: "image/jpeg",
+    quality: jpegQuality / 100,
+  });
   return { rgba: resized, blob };
 }
 
 function normalizedPixelBox(
   box: [number, number, number, number],
   width: number,
-  height: number,
+  height: number
 ): number[] {
   return [
     roundTo(box[0] / width, 6),
@@ -188,7 +199,7 @@ function normalizedPixelBox(
 export async function prepareCrop(
   image: DecodedImage,
   region: Region,
-  config: InferenceConfig,
+  config: InferenceConfig
 ): Promise<PreparedCrop> {
   const started = performance.now();
   validateRegion(region);
@@ -213,7 +224,7 @@ export async function prepareCrop(
     beforeHeight,
     modelWidth,
     modelHeight,
-    config.jpegQuality,
+    config.jpegQuality
   );
   const cropArea = Math.max(1, beforeWidth * beforeHeight);
   const sourceArea = Math.max(1, image.width * image.height);

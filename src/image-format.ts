@@ -1,25 +1,35 @@
 const ASCII = new TextDecoder("ascii");
 
+type ImageFormat = "jpeg" | "png" | "webp" | "gif";
+
+type ImageFormatInspector = {
+  format: ImageFormat;
+  matches: (bytes: Uint8Array) => boolean;
+  frameCount: (bytes: Uint8Array) => number;
+};
+
 function ascii(bytes: Uint8Array, start: number, length: number): string {
   return ASCII.decode(bytes.subarray(start, start + length));
 }
 
 function uint32Be(bytes: Uint8Array, offset: number): number {
   return (
-    ((bytes[offset] ?? 0) << 24) |
-    ((bytes[offset + 1] ?? 0) << 16) |
-    ((bytes[offset + 2] ?? 0) << 8) |
-    (bytes[offset + 3] ?? 0)
-  ) >>> 0;
+    (((bytes[offset] ?? 0) << 24) |
+      ((bytes[offset + 1] ?? 0) << 16) |
+      ((bytes[offset + 2] ?? 0) << 8) |
+      (bytes[offset + 3] ?? 0)) >>>
+    0
+  );
 }
 
 function uint32Le(bytes: Uint8Array, offset: number): number {
   return (
-    (bytes[offset] ?? 0) |
-    ((bytes[offset + 1] ?? 0) << 8) |
-    ((bytes[offset + 2] ?? 0) << 16) |
-    ((bytes[offset + 3] ?? 0) << 24)
-  ) >>> 0;
+    ((bytes[offset] ?? 0) |
+      ((bytes[offset + 1] ?? 0) << 8) |
+      ((bytes[offset + 2] ?? 0) << 16) |
+      ((bytes[offset + 3] ?? 0) << 24)) >>>
+    0
+  );
 }
 
 function isGif(bytes: Uint8Array): boolean {
@@ -83,27 +93,28 @@ function webpFrameCount(bytes: Uint8Array): number {
   return Math.max(1, frames);
 }
 
-export function detectImageFormat(bytes: Uint8Array): "jpeg" | "png" | "webp" | "gif" | "unknown" {
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpeg";
-  if (isPng(bytes)) return "png";
-  if (isWebP(bytes)) return "webp";
-  if (isGif(bytes)) return "gif";
-  return "unknown";
+const imageFormatInspectors: readonly ImageFormatInspector[] = [
+  {
+    format: "jpeg",
+    matches: (bytes) =>
+      bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff,
+    frameCount: () => 1,
+  },
+  { format: "png", matches: isPng, frameCount: pngFrameCount },
+  { format: "webp", matches: isWebP, frameCount: webpFrameCount },
+  { format: "gif", matches: isGif, frameCount: gifFrameCount },
+];
+
+function inspectImageFormat(bytes: Uint8Array): ImageFormatInspector | undefined {
+  return imageFormatInspectors.find((inspector) => inspector.matches(bytes));
+}
+
+export function detectImageFormat(bytes: Uint8Array): ImageFormat | "unknown" {
+  return inspectImageFormat(bytes)?.format ?? "unknown";
 }
 
 export function imageFrameCount(bytes: Uint8Array): number {
-  switch (detectImageFormat(bytes)) {
-    case "gif":
-      return gifFrameCount(bytes);
-    case "png":
-      return pngFrameCount(bytes);
-    case "webp":
-      return webpFrameCount(bytes);
-    case "jpeg":
-      return 1;
-    default:
-      return 0;
-  }
+  return inspectImageFormat(bytes)?.frameCount(bytes) ?? 0;
 }
 
 export function validateImageContainer(bytes: Uint8Array): void {

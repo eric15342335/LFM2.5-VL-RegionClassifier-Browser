@@ -9,7 +9,7 @@ There is no application backend, inference API, upload session, or remote infere
 - A current browser with WebGPU and `shader-f16` support
 - HTTPS or localhost
 - Enough browser storage for the model download and runtime cache
-- Node.js 20.19 or newer for local development and production builds
+- Node.js 24.8 or newer for local development and production builds
 
 ## Model profile
 
@@ -17,7 +17,7 @@ The browser profile is defined by `model-manifest.json`:
 
 - repository: `onnx-community/LFM2.5-VL-450M-ONNX`
 - revision: `3e0c8bb3b2268ffa7b30dba6a3c2d1985d87fb14`
-- Transformers.js: `4.2.1`
+- Transformers.js: `4.2.0`
 - execution provider: WebGPU
 - token embeddings: FP16
 - vision encoder: FP16

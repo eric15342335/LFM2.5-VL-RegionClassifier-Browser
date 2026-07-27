@@ -6,7 +6,7 @@
 Browser UI
   └─ BrowserInferenceEngine
       └─ dedicated module worker
-          ├─ Transformers.js 4.2.1
+          ├─ Transformers.js 4.2.0
           ├─ ONNX Runtime Web / WebGPU
           ├─ resident decoded-image map
           └─ crop → processor → greedy generation

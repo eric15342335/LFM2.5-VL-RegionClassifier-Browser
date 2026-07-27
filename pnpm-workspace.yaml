@@ -1,1 +1,4 @@
-savePrefix: C:\Users\123er
+overrides:
+  "@huggingface/transformers>onnxruntime-node": "-"
+  "@huggingface/transformers>sharp": "-"
+savePrefix: "~"

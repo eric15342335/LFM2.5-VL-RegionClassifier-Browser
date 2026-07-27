@@ -1,5 +1,4 @@
 import "./styles/app.css";
-
 import { INFERENCE_CONFIG } from "./config";
 import { BrowserInferenceEngine } from "./engines/browser-engine";
 import type {
@@ -12,7 +11,9 @@ import type {
 } from "./types";
 
 type Point = { x: number; y: number };
-type LatestResult = ClassificationResult & { browser: { round_trip_ms: number } };
+type LatestResult = ClassificationResult & {
+  browser: { round_trip_ms: number };
+};
 type FactEntry = readonly [name: string, value: unknown];
 type ResultRow = readonly [name: string, value: unknown, raw?: boolean];
 
@@ -140,12 +141,12 @@ function point(event: PointerEvent): Point {
     x: clamp(
       ((event.clientX - bounds.left) * element.canvas.width) / bounds.width,
       0,
-      element.canvas.width,
+      element.canvas.width
     ),
     y: clamp(
       ((event.clientY - bounds.top) * element.canvas.height) / bounds.height,
       0,
-      element.canvas.height,
+      element.canvas.height
     ),
   };
 }
@@ -191,14 +192,25 @@ function applyCoordinateInputs(): void {
     x2: clamp(Number(element.x2.value) / 100, 0, 1),
     y2: clamp(Number(element.y2.value) / 100, 0, 1),
   };
-  start = { x: values.x1 * element.canvas.width, y: values.y1 * element.canvas.height };
-  end = { x: values.x2 * element.canvas.width, y: values.y2 * element.canvas.height };
+  start = {
+    x: values.x1 * element.canvas.width,
+    y: values.y1 * element.canvas.height,
+  };
+  end = {
+    x: values.x2 * element.canvas.width,
+    y: values.y2 * element.canvas.height,
+  };
   latest = null;
   draw();
   classify();
 }
 
-function strokeNormalizedBox(box: readonly number[], color: string, width: number, dashed = false): void {
+function strokeNormalizedBox(
+  box: readonly number[],
+  color: string,
+  width: number,
+  dashed = false
+): void {
   const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = box;
   context.save();
   context.strokeStyle = color;
@@ -208,7 +220,7 @@ function strokeNormalizedBox(box: readonly number[], color: string, width: numbe
     x1 * element.canvas.width,
     y1 * element.canvas.height,
     (x2 - x1) * element.canvas.width,
-    (y2 - y1) * element.canvas.height,
+    (y2 - y1) * element.canvas.height
   );
   context.restore();
 }
@@ -268,11 +280,11 @@ function drawCropPreview(result: ClassificationResult): void {
     0,
     0,
     element.cropPreview.width,
-    element.cropPreview.height,
+    element.cropPreview.height
   );
   setText(
     element.cropDimensions,
-    `${result.crop.cropSizeBeforeResize.join(" × ")} → ${result.crop.modelImageSize.join(" × ")}`,
+    `${result.crop.cropSizeBeforeResize.join(" × ")} → ${result.crop.modelImageSize.join(" × ")}`
   );
 }
 
@@ -314,7 +326,8 @@ function stopTimer(): void {
 }
 
 function setBusy(busy: boolean): void {
-  element.retry.disabled = busy || !engine.isPrepared() || !bitmap || !imageDescriptor || !start || !end;
+  element.retry.disabled =
+    busy || !engine.isPrepared() || !bitmap || !imageDescriptor || !start || !end;
   element.cancel.disabled = !busy;
   element.file.disabled = busy;
   element.shape.disabled = busy;
@@ -346,7 +359,7 @@ function renderBrowserCapability(capability: BrowserCapability): void {
   setText(element.deviceBadge, status);
 
   const adapterName = formatValue(
-    adapter.description ?? adapter.device ?? adapter.architecture ?? "WebGPU adapter",
+    adapter.description ?? adapter.device ?? adapter.architecture ?? "WebGPU adapter"
   );
   const storageSummary = storage?.quota
     ? `${formatBytes(storage.available)} storage available`
@@ -355,7 +368,7 @@ function renderBrowserCapability(capability: BrowserCapability): void {
     element.hardwareSummary,
     capability.supported
       ? `${adapterName} · ${storageSummary}`
-      : capability.reason || "Browser WebGPU capability check failed",
+      : capability.reason || "Browser WebGPU capability check failed"
   );
 
   renderFacts(element.hardwareFacts, [
@@ -471,7 +484,10 @@ function renderJson(target: HTMLElement, value: unknown): void {
 }
 
 function render(result: ClassificationResult, roundTrip: number): void {
-  latest = { ...result, browser: { round_trip_ms: Number(roundTrip.toFixed(3)) } };
+  latest = {
+    ...result,
+    browser: { round_trip_ms: Number(roundTrip.toFixed(3)) },
+  };
   setText(element.elapsed, formatMilliseconds(roundTrip));
   const probability = result.tokenProbability;
   setText(element.label, result.label);
@@ -479,7 +495,7 @@ function render(result: ClassificationResult, roundTrip: number): void {
     element.probability,
     probability === null || probability === undefined
       ? "Not returned"
-      : `${(Number(probability) * 100).toFixed(1)}%`,
+      : `${(Number(probability) * 100).toFixed(1)}%`
   );
   setText(element.coverage, `${(Number(result.crop.selectedFractionOfCrop) * 100).toFixed(1)}%`);
   setText(element.totalTime, formatMilliseconds(result.performance.totalMs));
@@ -558,7 +574,7 @@ function renderEngineState(): void {
     element.browserModelStatus,
     engine.isPrepared()
       ? "Downloaded, compiled, and warmed up"
-      : "Not loaded in this browser session",
+      : "Not loaded in this browser session"
   );
 }
 
@@ -626,14 +642,18 @@ async function initializeBrowserInference(): Promise<void> {
   renderJson(element.rawCapability, { config: INFERENCE_CONFIG });
   setText(
     element.modelStorageEstimate,
-    `${formatBytes(INFERENCE_CONFIG.model.estimated_download_bytes)} model download; browser cache may be evicted`,
+    `${formatBytes(INFERENCE_CONFIG.model.estimated_download_bytes)} model download; browser cache may be evicted`
   );
 
   try {
     capabilityData = await engine.probe();
     renderBrowserCapability(capabilityData);
-    renderJson(element.rawCapability, { capability: capabilityData, config: INFERENCE_CONFIG });
-    if (!capabilityData.supported) throw new Error(capabilityData.reason || "WebGPU is unavailable");
+    renderJson(element.rawCapability, {
+      capability: capabilityData,
+      config: INFERENCE_CONFIG,
+    });
+    if (!capabilityData.supported)
+      throw new Error(capabilityData.reason || "WebGPU is unavailable");
 
     element.capabilityPill.className = "capability-pill ok";
     setText(element.capabilityText, "Browser WebGPU available");
@@ -645,7 +665,11 @@ async function initializeBrowserInference(): Promise<void> {
     setText(element.capabilityText, "Browser inference unavailable");
     element.status.classList.add("error");
     setText(element.status, error instanceof Error ? error.message : String(error));
-    renderJson(element.rawCapability, { capability: capabilityData, error: String(error), config: INFERENCE_CONFIG });
+    renderJson(element.rawCapability, {
+      capability: capabilityData,
+      error: String(error),
+      config: INFERENCE_CONFIG,
+    });
   }
 }
 
@@ -679,7 +703,9 @@ async function loadImage(file: File): Promise<void> {
   }
   let bitmapResult: ImageBitmap | null = null;
   try {
-    bitmapResult = await createImageBitmap(file, { imageOrientation: "from-image" });
+    bitmapResult = await createImageBitmap(file, {
+      imageOrientation: "from-image",
+    });
     if (bitmapResult.width * bitmapResult.height > INFERENCE_CONFIG.maxImagePixels) {
       throw new Error("Image has too many decoded pixels");
     }
@@ -710,7 +736,10 @@ async function loadImage(file: File): Promise<void> {
   element.canvasShell.classList.remove("empty");
   element.canvasPlaceholder.hidden = true;
   setText(element.fileName, file.name);
-  setText(element.imageDimensions, `${bitmap.width} × ${bitmap.height} · ${formatBytes(file.size)} · browser source retained`);
+  setText(
+    element.imageDimensions,
+    `${bitmap.width} × ${bitmap.height} · ${formatBytes(file.size)} · browser source retained`
+  );
 
   start = null;
   end = null;
@@ -825,7 +854,10 @@ element.loadModel.addEventListener("click", async () => {
     setBusy(false);
   } catch (error) {
     element.status.classList.add("error");
-    setText(element.status, `Model loading failed: ${error instanceof Error ? error.message : String(error)}`);
+    setText(
+      element.status,
+      `Model loading failed: ${error instanceof Error ? error.message : String(error)}`
+    );
     element.loadModel.disabled = false;
   }
 });
@@ -835,10 +867,15 @@ element.cancel.addEventListener("click", cancelActiveRequest);
 element.applyCoordinates.addEventListener("click", applyCoordinateInputs);
 element.clearEvents.addEventListener("click", clearEventLog);
 element.copyResult.addEventListener("click", () =>
-  copyText(JSON.stringify(latest, null, 2) ?? "null", element.copyResult),
+  copyText(JSON.stringify(latest, null, 2) ?? "null", element.copyResult)
 );
 element.copyDebug.addEventListener("click", () => {
-  const debug = { capability: capabilityData, config: INFERENCE_CONFIG, latest, events: eventHistory };
+  const debug = {
+    capability: capabilityData,
+    config: INFERENCE_CONFIG,
+    latest,
+    events: eventHistory,
+  };
   copyText(JSON.stringify(debug, null, 2) ?? "null", element.copyDebug);
 });
 

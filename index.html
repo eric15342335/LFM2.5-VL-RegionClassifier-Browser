@@ -2,18 +2,34 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1"
+    />
     <meta
       name="description"
       content="Run selected-region LFM2.5-VL classification entirely in the browser with WebGPU."
     />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#09111f" />
+    <meta
+      name="color-scheme"
+      content="dark"
+    />
+    <meta
+      name="theme-color"
+      content="#09111f"
+    />
     <title>LFM2.5-VL Region Classifier</title>
-    <script type="module" src="/src/main.ts"></script>
+    <script
+      type="module"
+      src="/src/main.ts"
+    ></script>
   </head>
   <body>
-    <a class="skip-link" href="#workspace">Skip to workspace</a>
+    <a
+      class="skip-link"
+      href="#workspace"
+      >Skip to workspace</a
+    >
 
     <header class="app-header">
       <div>
@@ -21,23 +37,51 @@
         <h1>LFM2.5-VL Classifier</h1>
         <p class="header-copy">Draw around one object and classify it entirely in your browser.</p>
       </div>
-      <div id="capabilityPill" class="capability-pill" role="status" aria-live="polite">
-        <span class="capability-dot" aria-hidden="true"></span>
+      <div
+        id="capabilityPill"
+        class="capability-pill"
+        role="status"
+        aria-live="polite"
+      >
+        <span
+          class="capability-dot"
+          aria-hidden="true"
+        ></span>
         <span id="capabilityText">Checking browser</span>
       </div>
     </header>
 
     <main id="workspace">
-      <section class="surface controls" aria-labelledby="controlsTitle">
-        <h2 id="controlsTitle" class="sr-only">Classifier controls</h2>
+      <section
+        class="surface controls"
+        aria-labelledby="controlsTitle"
+      >
+        <h2
+          id="controlsTitle"
+          class="sr-only"
+        >
+          Classifier controls
+        </h2>
 
         <div class="file-control">
           <span class="control-label">Image</span>
-          <label class="file-picker" for="file">
+          <label
+            class="file-picker"
+            for="file"
+          >
             <span class="file-button">Choose image</span>
-            <span id="fileName" class="file-name">No file selected</span>
+            <span
+              id="fileName"
+              class="file-name"
+              >No file selected</span
+            >
           </label>
-          <input id="file" type="file" accept="image/*" capture="environment" />
+          <input
+            id="file"
+            type="file"
+            accept="image/*"
+            capture="environment"
+          />
         </div>
 
         <label>
@@ -54,28 +98,68 @@
             <strong id="browserModelStatus">Checking WebGPU capability…</strong>
             <small id="modelStorageEstimate">Storage estimate unavailable</small>
           </div>
-          <button id="loadModel" class="button" type="button" disabled>Load browser model</button>
+          <button
+            id="loadModel"
+            class="button"
+            type="button"
+            disabled
+          >
+            Load browser model
+          </button>
         </div>
 
         <div class="control-actions">
-          <button id="retry" class="button primary" type="button" disabled>Classify again</button>
-          <button id="cancel" class="button" type="button" disabled>Cancel</button>
+          <button
+            id="retry"
+            class="button primary"
+            type="button"
+            disabled
+          >
+            Classify again
+          </button>
+          <button
+            id="cancel"
+            class="button"
+            type="button"
+            disabled
+          >
+            Cancel
+          </button>
         </div>
       </section>
 
-      <section class="surface status-panel" aria-labelledby="statusTitle">
-        <div class="execution-row" aria-live="polite">
+      <section
+        class="surface status-panel"
+        aria-labelledby="statusTitle"
+      >
+        <div
+          class="execution-row"
+          aria-live="polite"
+        >
           <span>Inference runtime</span>
-          <strong id="executionBadge" class="badge execution browser">Browser WebGPU</strong>
+          <strong
+            id="executionBadge"
+            class="badge execution browser"
+            >Browser WebGPU</strong
+          >
         </div>
         <div class="section-heading">
           <div>
             <p class="eyebrow">Live request</p>
             <h2 id="statusTitle">Inference pipeline</h2>
           </div>
-          <output id="elapsed" class="elapsed">0 ms</output>
+          <output
+            id="elapsed"
+            class="elapsed"
+            >0 ms</output
+          >
         </div>
-        <p id="status" class="status-message" role="status" aria-live="polite">
+        <p
+          id="status"
+          class="status-message"
+          role="status"
+          aria-live="polite"
+        >
           Choose an image, then draw around one object.
         </p>
         <progress
@@ -85,7 +169,10 @@
           max="100"
           value="0"
         ></progress>
-        <ol id="pipeline" class="pipeline">
+        <ol
+          id="pipeline"
+          class="pipeline"
+        >
           <li data-stage="accepted">Accepted</li>
           <li data-stage="crop">Preprocess</li>
           <li data-stage="inference">WebGPU</li>
@@ -93,7 +180,10 @@
         </ol>
       </section>
 
-      <section class="metric-grid" aria-label="Latest inference metrics">
+      <section
+        class="metric-grid"
+        aria-label="Latest inference metrics"
+      >
         <article class="metric-card">
           <span>Result</span>
           <strong id="label">—</strong>
@@ -121,22 +211,37 @@
       </section>
 
       <div class="workspace-grid">
-        <section class="surface image-panel" aria-labelledby="imageTitle">
+        <section
+          class="surface image-panel"
+          aria-labelledby="imageTitle"
+        >
           <div class="section-heading">
             <div>
               <p class="eyebrow">Input</p>
               <h2 id="imageTitle">Image workspace</h2>
             </div>
-            <span id="imageDimensions" class="subtle">No image</span>
+            <span
+              id="imageDimensions"
+              class="subtle"
+              >No image</span
+            >
           </div>
 
-          <div id="canvasShell" class="canvas-shell empty">
+          <div
+            id="canvasShell"
+            class="canvas-shell empty"
+          >
             <canvas
               id="canvas"
               role="img"
               aria-label="Image selection canvas. Draw with a pointer, or use the coordinate controls below."
             ></canvas>
-            <p id="canvasPlaceholder" class="canvas-placeholder">Upload an image to begin.</p>
+            <p
+              id="canvasPlaceholder"
+              class="canvas-placeholder"
+            >
+              Upload an image to begin.
+            </p>
           </div>
 
           <div class="legend">
@@ -148,19 +253,52 @@
             <summary>Keyboard-accessible coordinates</summary>
             <div class="coordinate-grid">
               <label
-                >X1 % <input id="x1" type="number" min="0" max="100" step="0.1" value="20"
+                >X1 %
+                <input
+                  id="x1"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value="20"
               /></label>
               <label
-                >Y1 % <input id="y1" type="number" min="0" max="100" step="0.1" value="20"
+                >Y1 %
+                <input
+                  id="y1"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value="20"
               /></label>
               <label
-                >X2 % <input id="x2" type="number" min="0" max="100" step="0.1" value="80"
+                >X2 %
+                <input
+                  id="x2"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value="80"
               /></label>
               <label
-                >Y2 % <input id="y2" type="number" min="0" max="100" step="0.1" value="80"
+                >Y2 %
+                <input
+                  id="y2"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value="80"
               /></label>
             </div>
-            <button id="applyCoordinates" class="button" type="button" disabled>
+            <button
+              id="applyCoordinates"
+              class="button"
+              type="button"
+              disabled
+            >
               Apply and classify
             </button>
           </details>
@@ -168,7 +306,11 @@
           <div class="crop-preview-wrap">
             <div class="section-heading compact">
               <h3 id="cropPreviewTitle">Model crop preview</h3>
-              <span id="cropDimensions" class="subtle">—</span>
+              <span
+                id="cropDimensions"
+                class="subtle"
+                >—</span
+              >
             </div>
             <canvas
               id="cropPreview"
@@ -180,63 +322,115 @@
           </div>
         </section>
 
-        <aside class="diagnostics-column" aria-label="Runtime diagnostics">
-          <section class="surface" aria-labelledby="hardwareTitle">
+        <aside
+          class="diagnostics-column"
+          aria-label="Runtime diagnostics"
+        >
+          <section
+            class="surface"
+            aria-labelledby="hardwareTitle"
+          >
             <div class="section-heading compact">
               <div>
                 <p class="eyebrow">Runtime</p>
                 <h2 id="hardwareTitle">Browser capability</h2>
               </div>
-              <span id="deviceBadge" class="badge">—</span>
+              <span
+                id="deviceBadge"
+                class="badge"
+                >—</span
+              >
             </div>
-            <p id="hardwareSummary" class="summary-copy">Checking WebGPU and browser storage…</p>
-            <dl id="hardwareFacts" class="fact-grid"></dl>
+            <p
+              id="hardwareSummary"
+              class="summary-copy"
+            >
+              Checking WebGPU and browser storage…
+            </p>
+            <dl
+              id="hardwareFacts"
+              class="fact-grid"
+            ></dl>
           </section>
 
-          <section class="surface" aria-labelledby="timingTitle">
+          <section
+            class="surface"
+            aria-labelledby="timingTitle"
+          >
             <div class="section-heading compact">
               <div>
                 <p class="eyebrow">Latest request</p>
                 <h2 id="timingTitle">Timing breakdown</h2>
               </div>
             </div>
-            <div id="timingBars" class="timing-bars">
+            <div
+              id="timingBars"
+              class="timing-bars"
+            >
               <p class="empty-copy">Run a classification to populate timings.</p>
             </div>
           </section>
 
-          <section class="surface" aria-labelledby="engineTitle">
+          <section
+            class="surface"
+            aria-labelledby="engineTitle"
+          >
             <div class="section-heading compact">
               <div>
                 <p class="eyebrow">Configuration</p>
                 <h2 id="engineTitle">Model and engine</h2>
               </div>
             </div>
-            <dl id="engineFacts" class="fact-grid"></dl>
+            <dl
+              id="engineFacts"
+              class="fact-grid"
+            ></dl>
           </section>
 
-          <section class="surface" aria-labelledby="eventsTitle">
+          <section
+            class="surface"
+            aria-labelledby="eventsTitle"
+          >
             <div class="section-heading compact">
               <div>
                 <p class="eyebrow">Trace</p>
                 <h2 id="eventsTitle">Event log</h2>
               </div>
-              <button id="clearEvents" class="button small" type="button">Clear</button>
+              <button
+                id="clearEvents"
+                class="button small"
+                type="button"
+              >
+                Clear
+              </button>
             </div>
-            <ol id="eventLog" class="event-log">
+            <ol
+              id="eventLog"
+              class="event-log"
+            >
               <li class="empty-copy">No request events yet.</li>
             </ol>
           </section>
         </aside>
       </div>
 
-      <section class="surface details-panel" aria-labelledby="generationTitle">
+      <section
+        class="surface details-panel"
+        aria-labelledby="generationTitle"
+      >
         <div class="section-heading">
           <div>
             <p class="eyebrow">Output</p>
             <h2 id="generationTitle">Generation details</h2>
           </div>
-          <button id="copyResult" class="button small" type="button" disabled>Copy result</button>
+          <button
+            id="copyResult"
+            class="button small"
+            type="button"
+            disabled
+          >
+            Copy result
+          </button>
         </div>
         <div class="table-wrap">
           <table aria-labelledby="generationTitle">
@@ -250,13 +444,23 @@
         </div>
       </section>
 
-      <section class="surface debug-panel" aria-labelledby="debugTitle">
+      <section
+        class="surface debug-panel"
+        aria-labelledby="debugTitle"
+      >
         <div class="section-heading">
           <div>
             <p class="eyebrow">Raw diagnostics</p>
             <h2 id="debugTitle">Debug data</h2>
           </div>
-          <button id="copyDebug" class="button small" type="button" disabled>Copy all</button>
+          <button
+            id="copyDebug"
+            class="button small"
+            type="button"
+            disabled
+          >
+            Copy all
+          </button>
         </div>
         <p class="summary-copy">
           Structured cards above are the primary view. Raw payloads remain available for exact
@@ -264,11 +468,17 @@
         </p>
         <details open>
           <summary>Latest result</summary>
-          <pre id="rawResult" class="json-view"><code>No result yet.</code></pre>
+          <pre
+            id="rawResult"
+            class="json-view"
+          ><code>No result yet.</code></pre>
         </details>
         <details>
           <summary>Browser capability and configuration</summary>
-          <pre id="rawCapability" class="json-view"><code>Loading…</code></pre>
+          <pre
+            id="rawCapability"
+            class="json-view"
+          ><code>Loading…</code></pre>
         </details>
       </section>
     </main>

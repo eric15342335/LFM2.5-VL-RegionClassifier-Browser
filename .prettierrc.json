@@ -5,6 +5,5 @@
   "trailingComma": "es5",
   "printWidth": 100,
   "singleAttributePerLine": true,
-  "plugins": ["@ianvs/prettier-plugin-sort-imports", "prettier-plugin-tailwindcss"],
-  "tailwindStylesheet": "./src/app/globals.css"
+  "plugins": ["@ianvs/prettier-plugin-sort-imports"]
 }
