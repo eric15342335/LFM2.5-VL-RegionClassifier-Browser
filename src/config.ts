@@ -1,7 +1,8 @@
 import manifestJson from "../model-manifest.json";
-import type { InferenceConfig, ModelManifest } from "./types";
+import { parseModelManifest } from "./domain/schemas";
+import type { InferenceConfig } from "./types";
 
-const model = manifestJson as ModelManifest;
+const model = parseModelManifest(manifestJson);
 
 export const INFERENCE_CONFIG: Readonly<InferenceConfig> = Object.freeze({
   prompt:
@@ -19,6 +20,7 @@ export const INFERENCE_CONFIG: Readonly<InferenceConfig> = Object.freeze({
   jpegQuality: 88,
   maxImageBytes: 100 * 1024 * 1024,
   maxImagePixels: 40_000_000,
+  capabilityProbeTimeoutSeconds: 15,
   inferenceTimeoutSeconds: 300,
   modelLoadTimeoutSeconds: 600,
   resampling: "bilinear",

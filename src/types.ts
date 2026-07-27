@@ -1,5 +1,3 @@
-export type SelectionShape = "rect" | "circle";
-
 export interface NormalizedSelection {
   x1: number;
   y1: number;
@@ -7,9 +5,7 @@ export interface NormalizedSelection {
   y2: number;
 }
 
-export interface Region extends NormalizedSelection {
-  shape: SelectionShape;
-}
+export type Region = NormalizedSelection;
 
 export interface InferenceConfig {
   prompt: string;
@@ -21,40 +17,15 @@ export interface InferenceConfig {
   jpegQuality: number;
   maxImageBytes: number;
   maxImagePixels: number;
+  capabilityProbeTimeoutSeconds: number;
   inferenceTimeoutSeconds: number;
   modelLoadTimeoutSeconds: number;
   resampling: string;
   logprobs: boolean;
-  model: ModelManifest;
+  model: import("./domain/schemas").ModelManifest;
 }
 
-export interface ModelArtifact {
-  role:
-    "configuration" | "tokenizer" | "processor" | "embedding" | "vision" | "decoder" | "license";
-  path: string;
-  dtype?: "fp16" | "q4f16";
-  expected_bytes?: number;
-  sha256?: string;
-  resolved_url?: string;
-}
-
-export interface ModelManifest {
-  manifest_version?: number;
-  repository: string;
-  revision: string;
-  transformers_js_version: string;
-  runtime: "webgpu";
-  estimated_download_bytes: number;
-  size_status?: "estimated" | "verified";
-  integrity_status?: "pending-release-verification" | "verified";
-  dtype: {
-    embed_tokens: "fp16";
-    vision_encoder: "fp16";
-    decoder_model_merged: "q4f16";
-  };
-  artifacts: ModelArtifact[];
-  license: string;
-}
+export type { ModelManifest } from "./domain/schemas";
 
 export interface ImageDescriptor {
   id: string;
@@ -98,7 +69,6 @@ export interface ClassificationResult {
   label: string;
   tokenProbability: number | null;
   selection: {
-    shape: SelectionShape;
     box: number[];
   };
   crop: CropDetails;
@@ -163,36 +133,3 @@ export interface BrowserCapability {
   limits?: Record<string, number>;
   reason?: string;
 }
-
-export type WorkerRequest =
-  | { id: number; type: "PROBE"; config: InferenceConfig }
-  | { id: number; type: "PREPARE"; config: InferenceConfig; warmup?: boolean }
-  | {
-      id: number;
-      type: "LOAD_IMAGE";
-      descriptor: ImageDescriptor;
-      bytes: ArrayBuffer;
-      config: InferenceConfig;
-    }
-  | { id: number; type: "RELEASE_IMAGE"; imageId: string }
-  | {
-      id: number;
-      type: "CLASSIFY";
-      imageId: string;
-      region: Region;
-      config: InferenceConfig;
-      jobId: number;
-    }
-  | { id: number; type: "CANCEL"; jobId?: number }
-  | { id: number; type: "GET_STATUS" }
-  | { id: number; type: "DISPOSE" };
-
-export type WorkerResponse =
-  | { id: number; type: "RESULT"; value: unknown }
-  | {
-      id: number;
-      type: "ERROR";
-      error: { name: string; message: string; stack?: string };
-    }
-  | { id: number; type: "PROGRESS"; event: ProgressEvent }
-  | { id: number; type: "DEVICE_LOST"; reason: string };

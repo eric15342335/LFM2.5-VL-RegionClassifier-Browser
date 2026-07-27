@@ -13,14 +13,14 @@ describe("model manifest", () => {
     }
   });
 
-  it("keeps the declared runtime version and verified download estimate consistent", () => {
+  it("keeps the declared runtime version and verified download size consistent", () => {
     const expectedBytes = manifest.artifacts.reduce(
       (total, artifact) => total + (artifact.expected_bytes ?? 0),
       0
     );
 
     expect(manifest.transformers_js_version).toBe(transformerVersion);
-    expect(manifest.estimated_download_bytes).toBe(573_000_000);
+    expect(manifest.estimated_download_bytes).toBe(576_645_711);
     expect(manifest.estimated_download_bytes).toBe(expectedBytes);
   });
 });

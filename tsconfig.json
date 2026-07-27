@@ -12,7 +12,8 @@
     "noEmit": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
-    "types": ["@webgpu/types", "vite/client"]
+    "types": ["@webgpu/types", "vite/client"],
+    "jsx": "react-jsx"
   },
   "include": ["src", "vite.config.ts"]
 }

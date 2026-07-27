@@ -1,5 +1,5 @@
 {
-  "name": "LFM2.5-VL-RegionClassifier-UI",
+  "name": "lfm2-5-vl-region-classifier-ui",
   "version": "1.0.0",
   "private": true,
   "description": "Browser-only WebGPU selected-region image classifier",
@@ -17,21 +17,40 @@
     "lint:css": "stylelint \"src/**/*.css\"",
     "lint:html": "html-validate index.html",
     "lint": "pnpm run lint:oxlint && pnpm run lint:eslint && pnpm run lint:css && pnpm run lint:html",
-    "check": "pnpm run audit && pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
-    "audit": "node scripts/audit-browser-only.mjs"
+    "check": "pnpm run audit && pnpm run verify:manifest && pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
+    "audit": "node scripts/audit-browser-only.mjs",
+    "metrics": "node scripts/measure-codebase.mjs",
+    "verify:manifest": "node scripts/verify-model-manifest.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "~4.2.0",
-    "@ianvs/prettier-plugin-sort-imports": "~4.7.1"
+    "@mantine/core": "^9.4.2",
+    "@mantine/dropzone": "^9.4.2",
+    "@mantine/hooks": "^9.4.2",
+    "@mantine/notifications": "^9.4.2",
+    "@xstate/react": "^6.1.0",
+    "comlink": "^4.4.2",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-image-crop": "~11.1.2",
+    "valibot": "^1.4.2",
+    "xstate": "^5.32.5"
   },
   "devDependencies": {
     "@eslint/js": "~10.0.1",
+    "@ianvs/prettier-plugin-sort-imports": "~4.7.1",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "~26.1.1",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.0.4",
     "@webgpu/types": "~0.1.71",
     "eslint": "~10.8.0",
     "eslint-config-prettier": "~10.1.8",
     "globals": "~17.7.0",
     "html-validate": "~11.5.6",
+    "jsdom": "^26.1.0",
     "oxlint": "~1.75.0",
     "prettier": "~3.9.6",
     "stylelint": "~17.14.1",
@@ -40,5 +59,6 @@
     "typescript-eslint": "~8.65.0",
     "vite": "~8.1.5",
     "vitest": "~4.1.10"
-  }
+  },
+  "packageManager": "pnpm@10.34.5"
 }

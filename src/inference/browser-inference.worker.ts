@@ -8,6 +8,9 @@ import {
   Lfm2VlImageProcessor,
   RawImage,
 } from "@huggingface/transformers";
+import { expose } from "comlink";
+import * as v from "valibot";
+import { ImageDescriptorSchema, RegionSchema } from "../domain/schemas";
 import { validateImageContainer } from "../image-format";
 import { prepareCrop, roundTo, type DecodedImage } from "../preprocess";
 import {
@@ -22,9 +25,13 @@ import type {
   ImageDescriptor,
   InferenceConfig,
   ProgressEvent,
-  WorkerRequest,
-  WorkerResponse,
 } from "../types";
+import type {
+  DeviceLostListener,
+  ProgressListener,
+  WorkerApi,
+  WorkerClassifyRequest,
+} from "./worker-api";
 
 type UnknownRecord = Record<string, unknown>;
 type ModelImage = Pick<DecodedImage, "width" | "height">;
@@ -90,7 +97,6 @@ type SliceableTensor = {
   slice(axis: null, range: [number | null, number | null]): unknown;
 };
 
-const worker = self as DedicatedWorkerGlobalScope;
 const sources = new Map<string, DecodedImage & { descriptor: ImageDescriptor }>();
 const stoppingCriteria = new InterruptableStoppingCriteria();
 
@@ -99,9 +105,18 @@ let processor: RuntimeProcessor | null = null;
 let preparedRevision: string | null = null;
 let preparePromise: Promise<void> | null = null;
 let currentJobId: number | null = null;
-let activeRequest: Extract<WorkerRequest, { type: "CLASSIFY" }> | null = null;
-let pendingRequest: Extract<WorkerRequest, { type: "CLASSIFY" }> | null = null;
+type QueuedClassification = WorkerClassifyRequest & {
+  id: number;
+  resolve: (result: ClassificationResult) => void;
+  reject: (error: unknown) => void;
+};
+
+let activeRequest: QueuedClassification | null = null;
+let pendingRequest: QueuedClassification | null = null;
+let nextOperationId = 1;
 const requestStartedAt = new Map<number, number>();
+const progressListeners = new Map<number, ProgressListener>();
+let deviceLostListener: DeviceLostListener | undefined;
 let deviceLossSubscribed = false;
 let successfulCapability: BrowserCapability | null = null;
 
@@ -119,23 +134,16 @@ class MultimodalInputBudgetError extends Error {
   }
 }
 
-function post(response: WorkerResponse): void {
-  worker.postMessage(response);
-  if (response.type === "RESULT" || response.type === "ERROR") requestStartedAt.delete(response.id);
+function startOperation(onProgress?: ProgressListener): number {
+  const id = nextOperationId++;
+  requestStartedAt.set(id, performance.now());
+  if (onProgress) progressListeners.set(id, onProgress);
+  return id;
 }
 
-function serializeError(error: unknown): {
-  name: string;
-  message: string;
-  stack?: string;
-} {
-  if (error instanceof Error)
-    return { name: error.name, message: error.message, stack: error.stack };
-  return { name: "Error", message: String(error) };
-}
-
-function fail(id: number, error: unknown): void {
-  post({ id, type: "ERROR", error: serializeError(error) });
+function finishOperation(id: number): void {
+  requestStartedAt.delete(id);
+  progressListeners.delete(id);
 }
 
 function progress(
@@ -153,7 +161,7 @@ function progress(
     elapsedMs: roundTo(performance.now() - (requestStartedAt.get(id) ?? performance.now()), 3),
     detail,
   };
-  post({ id, type: "PROGRESS", event });
+  void progressListeners.get(id)?.(event);
 }
 
 function asRecord(value: unknown): UnknownRecord | undefined {
@@ -193,13 +201,13 @@ async function probe(config: InferenceConfig): Promise<BrowserCapability> {
 
   const capability: BrowserCapability = {
     supported: false,
-    secureContext: worker.isSecureContext,
+    secureContext: self.isSecureContext,
     hasWebgpu: "gpu" in navigator,
     adapterAcquired: false,
     deviceAcquired: false,
     shaderF16: false,
   };
-  if (!worker.isSecureContext) {
+  if (!self.isSecureContext) {
     capability.reason = "WebGPU requires HTTPS or localhost";
     return capability;
   }
@@ -335,11 +343,7 @@ function subscribeToDeviceLoss(): void {
     processor = null;
     successfulCapability = null;
     deviceLossSubscribed = false;
-    post({
-      id: 0,
-      type: "DEVICE_LOST",
-      reason: `${info.reason}: ${info.message}`,
-    });
+    void deviceLostListener?.(`${info.reason}: ${info.message}`);
   });
 }
 
@@ -684,9 +688,7 @@ async function decodeImage(
   }
 }
 
-async function classify(
-  request: Extract<WorkerRequest, { type: "CLASSIFY" }>
-): Promise<ClassificationResult> {
+async function classifyRequest(request: QueuedClassification): Promise<ClassificationResult> {
   const started = performance.now();
   await prepareModel(request.id, request.config, false);
   const source = sources.get(request.imageId);
@@ -723,7 +725,6 @@ async function classify(
     label,
     tokenProbability: generation.probability,
     selection: {
-      shape: request.region.shape,
       box: [request.region.x1, request.region.y1, request.region.x2, request.region.y2],
     },
     crop: crop.details,
@@ -757,19 +758,19 @@ async function classify(
   };
 }
 
-function abortPending(request: Extract<WorkerRequest, { type: "CLASSIFY" }>, reason: string): void {
-  fail(request.id, new DOMException(reason, "AbortError"));
+function abortQueued(request: QueuedClassification, reason: string): void {
+  request.reject(new DOMException(reason, "AbortError"));
+  finishOperation(request.id);
 }
 
-async function drainClassification(
-  request: Extract<WorkerRequest, { type: "CLASSIFY" }>
-): Promise<void> {
+async function drainClassification(request: QueuedClassification): Promise<void> {
   activeRequest = request;
   try {
-    post({ id: request.id, type: "RESULT", value: await classify(request) });
+    request.resolve(await classifyRequest(request));
   } catch (error) {
-    fail(request.id, error);
+    request.reject(error);
   } finally {
+    finishOperation(request.id);
     currentJobId = null;
     activeRequest = null;
     const next = pendingRequest;
@@ -778,22 +779,22 @@ async function drainClassification(
   }
 }
 
-function enqueueClassification(request: Extract<WorkerRequest, { type: "CLASSIFY" }>): void {
+function enqueueClassification(request: QueuedClassification): void {
   if (!activeRequest) {
     void drainClassification(request);
     return;
   }
   if (pendingRequest)
-    abortPending(pendingRequest, "Classification was superseded by a newer request");
+    abortQueued(pendingRequest, "Classification was superseded by a newer request");
   pendingRequest = request;
   progress(request.id, "queued", "Queued behind the active browser generation", 45, {
     queued_ahead: 1,
   });
 }
 
-async function dispose(): Promise<void> {
+async function disposeRuntime(): Promise<void> {
   stoppingCriteria.interrupt();
-  if (pendingRequest) abortPending(pendingRequest, "Worker disposed");
+  if (pendingRequest) abortQueued(pendingRequest, "Worker disposed");
   pendingRequest = null;
   activeRequest = null;
   currentJobId = null;
@@ -805,80 +806,62 @@ async function dispose(): Promise<void> {
   preparePromise = null;
   deviceLossSubscribed = false;
   successfulCapability = null;
+  progressListeners.clear();
+  requestStartedAt.clear();
 }
 
-worker.addEventListener("message", (message: MessageEvent<WorkerRequest>) => {
-  const request = message.data;
-  requestStartedAt.set(request.id, performance.now());
-  if (request.type === "CANCEL") {
-    if (request.jobId === undefined || currentJobId === request.jobId) stoppingCriteria.interrupt();
-    if (pendingRequest && (request.jobId === undefined || pendingRequest.jobId === request.jobId)) {
-      abortPending(pendingRequest, "Classification cancelled");
+const api: WorkerApi = {
+  probe,
+  async prepare(config, warmup, onProgress) {
+    const id = startOperation(onProgress);
+    try {
+      await prepareModel(id, config, warmup);
+    } finally {
+      finishOperation(id);
+    }
+  },
+  async loadImage(descriptorInput, bytes, config) {
+    const descriptor = v.parse(ImageDescriptorSchema, descriptorInput);
+    const decoded = await decodeImage(descriptor, bytes, config);
+    sources.set(descriptor.id, decoded);
+    return { width: decoded.width, height: decoded.height, bytes: descriptor.bytes };
+  },
+  async releaseImage(imageId) {
+    return sources.delete(imageId);
+  },
+  async classify(requestInput, onProgress) {
+    const request: WorkerClassifyRequest = {
+      ...requestInput,
+      region: v.parse(RegionSchema, requestInput.region),
+    };
+    const id = startOperation(onProgress);
+    return new Promise<ClassificationResult>((resolve, reject) => {
+      enqueueClassification({ ...request, id, resolve, reject });
+    });
+  },
+  async cancel(jobId) {
+    if (jobId === undefined || currentJobId === jobId) stoppingCriteria.interrupt();
+    if (pendingRequest && (jobId === undefined || pendingRequest.jobId === jobId)) {
+      abortQueued(pendingRequest, "Classification cancelled");
       pendingRequest = null;
     }
-    post({ id: request.id, type: "RESULT", value: true });
-    return;
-  }
-  if (request.type === "CLASSIFY") {
-    enqueueClassification(request);
-    return;
-  }
+  },
+  async status() {
+    return {
+      prepared: Boolean(model && processor),
+      revision: preparedRevision,
+      images: sources.size,
+      activeJobId: currentJobId,
+      pendingJobId: pendingRequest?.jobId ?? null,
+    };
+  },
+  async setDeviceLostListener(listener) {
+    deviceLostListener = listener;
+  },
+  async dispose() {
+    await disposeRuntime();
+    deviceLostListener = undefined;
+  },
+};
 
-  void (async () => {
-    try {
-      switch (request.type) {
-        case "PROBE":
-          post({
-            id: request.id,
-            type: "RESULT",
-            value: await probe(request.config),
-          });
-          break;
-        case "PREPARE":
-          await prepareModel(request.id, request.config, request.warmup ?? true);
-          post({ id: request.id, type: "RESULT", value: true });
-          break;
-        case "LOAD_IMAGE": {
-          const decoded = await decodeImage(request.descriptor, request.bytes, request.config);
-          sources.set(request.descriptor.id, decoded);
-          post({
-            id: request.id,
-            type: "RESULT",
-            value: {
-              width: decoded.width,
-              height: decoded.height,
-              bytes: request.descriptor.bytes,
-            },
-          });
-          break;
-        }
-        case "RELEASE_IMAGE":
-          post({
-            id: request.id,
-            type: "RESULT",
-            value: sources.delete(request.imageId),
-          });
-          break;
-        case "GET_STATUS":
-          post({
-            id: request.id,
-            type: "RESULT",
-            value: {
-              prepared: Boolean(model && processor),
-              revision: preparedRevision,
-              images: sources.size,
-              active_job_id: currentJobId,
-              pending_job_id: pendingRequest?.jobId ?? null,
-            },
-          });
-          break;
-        case "DISPOSE":
-          await dispose();
-          post({ id: request.id, type: "RESULT", value: true });
-          break;
-      }
-    } catch (error) {
-      fail(request.id, error);
-    }
-  })();
-});
+expose(api);
