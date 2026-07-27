@@ -5,7 +5,7 @@
   "transformers_js_version": "4.2.0",
   "runtime": "webgpu",
   "estimated_download_bytes": 573000000,
-  "size_status": "verified",
+  "size_status": "estimated",
   "integrity_status": "pending-release-verification",
   "dtype": {
     "embed_tokens": "fp16",
@@ -49,7 +49,8 @@
       "path": "onnx/embed_tokens_fp16.onnx_data",
       "dtype": "fp16",
       "expected_bytes": 140509184,
-      "resolved_url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/3e0c8bb3b2268ffa7b30dba6a3c2d1985d87fb14/onnx/embed_tokens_fp16.onnx_data"
+      "resolved_url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/3e0c8bb3b2268ffa7b30dba6a3c2d1985d87fb14/onnx/embed_tokens_fp16.onnx_data",
+      "sha256": "40f6efc09b9e0e22946dbf749a38017ea8a1a812d7f4b25eea27c9ebb4a4ce39"
     },
     {
       "role": "vision",
@@ -62,7 +63,8 @@
       "path": "onnx/vision_encoder_fp16.onnx_data",
       "dtype": "fp16",
       "expected_bytes": 198180864,
-      "resolved_url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/3e0c8bb3b2268ffa7b30dba6a3c2d1985d87fb14/onnx/vision_encoder_fp16.onnx_data"
+      "resolved_url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/3e0c8bb3b2268ffa7b30dba6a3c2d1985d87fb14/onnx/vision_encoder_fp16.onnx_data",
+      "sha256": "b4633153bc838509ded8174e7c5991230217e46bd8ad8b5d19755f654254566d"
     },
     {
       "role": "decoder",
@@ -75,7 +77,8 @@
       "path": "onnx/decoder_model_merged_q4f16.onnx_data",
       "dtype": "q4f16",
       "expected_bytes": 234309952,
-      "resolved_url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/3e0c8bb3b2268ffa7b30dba6a3c2d1985d87fb14/onnx/decoder_model_merged_q4f16.onnx_data"
+      "resolved_url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/3e0c8bb3b2268ffa7b30dba6a3c2d1985d87fb14/onnx/decoder_model_merged_q4f16.onnx_data",
+      "sha256": "a93e7fc1821e8aaefc33d30af4299411cf0490456d769795bd30db00cb38be95"
     },
     {
       "role": "license",

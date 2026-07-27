@@ -1,7 +1,13 @@
+import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 export default defineConfig({
   base: "./",
+  plugins: [
+    react({
+      babel: { plugins: [["babel-plugin-react-compiler"]] },
+    }),
+  ],
   build: {
     outDir: "dist",
     emptyOutDir: true,
@@ -15,7 +21,5 @@ export default defineConfig({
       },
     },
   },
-  worker: {
-    format: "es",
-  },
+  worker: { format: "es" },
 });

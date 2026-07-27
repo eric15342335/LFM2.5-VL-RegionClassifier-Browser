@@ -1,7 +1,8 @@
 import manifestJson from "../model-manifest.json";
-import type { InferenceConfig, ModelManifest } from "./types";
+import { parseModelManifest } from "./domain/schemas";
+import type { InferenceConfig } from "./types";
 
-const model = manifestJson as ModelManifest;
+const model = parseModelManifest(manifestJson);
 
 export const INFERENCE_CONFIG: Readonly<InferenceConfig> = Object.freeze({
   prompt:
