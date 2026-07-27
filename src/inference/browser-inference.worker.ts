@@ -347,31 +347,6 @@ function subscribeToDeviceLoss(): void {
   });
 }
 
-function modelLoadProgress(
-  id: number,
-  item: unknown,
-  downloadedByFile: Map<string, number>,
-  predictedBytes: number
-): void {
-  const progressItem = asRecord(item);
-  const status = String(progressItem?.status ?? "downloading");
-  const file = typeof progressItem?.file === "string" ? progressItem.file : undefined;
-  const loaded = Number(progressItem?.loaded);
-  const total = Number(progressItem?.total);
-  const progressKey = file ?? `${status}:${Number.isFinite(total) ? total : "unknown"}`;
-  if (Number.isFinite(loaded) && loaded >= 0) downloadedByFile.set(progressKey, loaded);
-  const downloadedBytes = [...downloadedByFile.values()].reduce((sum, value) => sum + value, 0);
-  const percentage =
-    predictedBytes > 0 ? Math.min(100, (downloadedBytes / predictedBytes) * 100) : 0;
-  progress(id, "install", file ? `${status}: ${file}` : `Model ${status}`, percentage, {
-    file,
-    loaded: Number.isFinite(loaded) ? loaded : undefined,
-    total: Number.isFinite(total) ? total : undefined,
-    downloaded_bytes: downloadedBytes,
-    predicted_bytes: predictedBytes,
-  });
-}
-
 async function prepareModel(id: number, config: InferenceConfig, warmup = true): Promise<void> {
   if (model && processor && preparedRevision === config.model.revision) return;
   if (preparePromise) return preparePromise;
@@ -391,20 +366,13 @@ async function prepareModel(id: number, config: InferenceConfig, warmup = true):
     const baseOptions = {
       revision: config.model.revision,
     };
-    const downloadedByFile = new Map<string, number>();
-    const progressCallback = (item: unknown) =>
-      modelLoadProgress(id, item, downloadedByFile, config.model.estimated_download_bytes);
-    const processorOptions = {
-      ...baseOptions,
-      progress_callback: progressCallback,
-    };
+    progress(id, "install", "Downloading required model files", 20);
     const [loadedProcessor, loadedModel] = await Promise.all([
-      AutoProcessor.from_pretrained(config.model.repository, processorOptions),
+      AutoProcessor.from_pretrained(config.model.repository, baseOptions),
       AutoModelForImageTextToText.from_pretrained(config.model.repository, {
         ...baseOptions,
         device: "webgpu",
         dtype: config.model.dtype,
-        progress_callback: progressCallback,
       }),
     ]);
     processor = loadedProcessor as unknown as RuntimeProcessor;

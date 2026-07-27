@@ -117,7 +117,7 @@ export function ResultPanel({ result, image }: Props) {
               className="crop-preview"
               aria-label="Selected crop preview"
             />
-            <SimpleGrid cols={{ base: 2, sm: 4 }}>
+            <SimpleGrid cols={2}>
               <Metric
                 label="Token confidence"
                 value={formatPercent(result.tokenProbability)}

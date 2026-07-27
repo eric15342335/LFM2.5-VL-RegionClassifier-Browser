@@ -10,7 +10,7 @@ import {
   Text,
   Title,
 } from "@mantine/core";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import ReactCrop, { type PercentCrop } from "react-image-crop";
 import {
   isUsableSelection,
@@ -28,6 +28,7 @@ type Props = Readonly<{
   coordinatesOpen: boolean;
   onCoordinatesOpenChange: (open: boolean) => void;
   onSelectionChange: (selection: NormalizedSelection | null) => void;
+  onSelectionComplete: (selection: NormalizedSelection) => void;
 }>;
 
 function selectionsEqual(
@@ -48,8 +49,10 @@ export function ImageWorkspace({
   coordinatesOpen,
   onCoordinatesOpenChange,
   onSelectionChange,
+  onSelectionComplete,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const drawingRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const x1Ref = useRef<HTMLInputElement>(null);
   const [transientCrop, setTransientCrop] = useState<PercentCrop | undefined>();
   const [coordinates, setCoordinates] = useState({ x1: 10, y1: 10, x2: 90, y2: 90 });
@@ -106,8 +109,61 @@ export function ImageWorkspace({
     setTransientCrop(undefined);
 
     if (isUsableSelection(next)) {
-      if (!selectionsEqual(next, selection)) onSelectionChange(next);
+      onSelectionComplete(next);
     } else if (selection !== null) onSelectionChange(null);
+  };
+
+  const pointerPosition = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(100, ((event.clientX - bounds.left) / bounds.width) * 100)),
+      y: Math.max(0, Math.min(100, ((event.clientY - bounds.top) / bounds.height) * 100)),
+    };
+  };
+
+  const cropFromPointer = (event: ReactPointerEvent<HTMLCanvasElement>): PercentCrop | null => {
+    const start = drawingRef.current;
+    if (!start || start.pointerId !== event.pointerId) return null;
+    const end = pointerPosition(event);
+    return {
+      unit: "%",
+      x: Math.min(start.x, end.x),
+      y: Math.min(start.y, end.y),
+      width: Math.abs(end.x - start.x),
+      height: Math.abs(end.y - start.y),
+    };
+  };
+
+  const beginDrawing = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (disabled || crop) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const start = pointerPosition(event);
+    drawingRef.current = { pointerId: event.pointerId, ...start };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setTransientCrop({ unit: "%", x: start.x, y: start.y, width: 0, height: 0 });
+  };
+
+  const continueDrawing = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const next = cropFromPointer(event);
+    if (!next) return;
+    event.preventDefault();
+    setTransientCrop(next);
+  };
+
+  const finishDrawing = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const next = cropFromPointer(event);
+    if (!next) return;
+    event.preventDefault();
+    drawingRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    commitCrop(next);
+  };
+
+  const cancelDrawing = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (drawingRef.current?.pointerId !== event.pointerId) return;
+    drawingRef.current = null;
+    setTransientCrop(undefined);
   };
 
   const updateCoordinate = (key: keyof NormalizedSelection, value: string | number) => {
@@ -127,7 +183,8 @@ export function ImageWorkspace({
     });
     setTransientCrop(undefined);
 
-    onSelectionChange(isUsableSelection(next) ? next : null);
+    if (isUsableSelection(next)) onSelectionComplete(next);
+    else onSelectionChange(null);
   };
 
   return (
@@ -183,6 +240,10 @@ export function ImageWorkspace({
                 ref={canvasRef}
                 className="image-canvas"
                 aria-label="Image selection workspace"
+                onPointerDown={beginDrawing}
+                onPointerMove={continueDrawing}
+                onPointerUp={finishDrawing}
+                onPointerCancel={cancelDrawing}
               />
             </ReactCrop>
           )}

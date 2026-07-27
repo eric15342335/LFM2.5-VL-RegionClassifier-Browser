@@ -53,6 +53,7 @@ export type AppEvent =
   | { type: "LOAD_MODEL" }
   | { type: "FILE_SELECTED"; file: File }
   | { type: "SELECTION_CHANGED"; selection: NormalizedSelection | null }
+  | { type: "SELECTION_COMPLETED"; selection: NormalizedSelection }
   | { type: "CLASSIFY" }
   | { type: "CANCEL" }
   | { type: "CLEAR_EVENTS" }
@@ -178,6 +179,10 @@ export const appMachine = setup({
   guards: {
     canClassify: ({ context }) =>
       context.modelPrepared && Boolean(context.image && context.selection),
+    canAutoClassify: ({ context, event }) =>
+      event.type === "SELECTION_COMPLETED" &&
+      context.modelPrepared &&
+      Boolean(context.image && event.selection),
     isAbortError: ({ event }) => {
       const error = errorOf(event);
       return error instanceof Error && error.name === "AbortError";
@@ -207,11 +212,15 @@ export const appMachine = setup({
       message: () => "Decoding and retaining the image in this browser...",
     }),
     setSelection: assign({
-      selection: ({ event }) => (event.type === "SELECTION_CHANGED" ? event.selection : null),
+      selection: ({ event }) =>
+        event.type === "SELECTION_CHANGED" || event.type === "SELECTION_COMPLETED"
+          ? event.selection
+          : null,
       result: () => null,
       technicalError: () => null,
       message: ({ event }) =>
-        event.type === "SELECTION_CHANGED" && event.selection
+        (event.type === "SELECTION_CHANGED" || event.type === "SELECTION_COMPLETED") &&
+        event.selection
           ? "Selection ready. Classify the selected region."
           : "Draw around one object.",
     }),
@@ -435,6 +444,10 @@ export const appMachine = setup({
           on: {
             IMAGE_REPLACED: { target: ".idle", actions: "clearResult" },
             SELECTION_CHANGED: { target: ".idle", actions: "setSelection" },
+            SELECTION_COMPLETED: [
+              { target: ".running", guard: "canAutoClassify", actions: "setSelection" },
+              { target: ".idle", actions: "setSelection" },
+            ],
             CLASSIFY: { target: ".running", guard: "canClassify" },
           },
           states: {
