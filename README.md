@@ -1,51 +1,59 @@
-# LFM2.5-VL Selected-Region Classifier
+# LFM2.5-VL Region Classifier
 
-A browser-only image classifier for selected regions. The app decodes images, crops regions, runs inference, and creates results locally in the browser. It does not use an application backend, inference API, upload session, or remote inference route.
+Classify objects or areas within an image by drawing a crop around them.
 
-## Contents
+Everything runs in the browser with WebGPU: image decoding, cropping, model inference, and result generation. Your images and selected regions are not uploaded to an inference server.
 
-- [Requirements](#requirements)
-- [Quick start](#quick-start)
-- [Scripts](#scripts)
-- [Model](#model)
-- [Deployment](#deployment)
-- [Documentation](#documentation)
+## How it works
+
+1. Open an image.
+2. Draw a box around the area you want to classify.
+3. Run the model.
+4. Review the result and repeat with another region if needed.
+
+The application uses the ONNX version of [LFM2.5-VL-450M](https://huggingface.co/LiquidAI/LFM2.5-VL-450M) published by [ONNX Community](https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX).
 
 ## Requirements
 
-- A secure-context browser that supports [WebGPU](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API) and `shader-f16`
-- Browser storage for the model and runtime cache
-- [Node.js](https://nodejs.org/) 22 or later and [Corepack](https://nodejs.org/api/corepack.html)
-a
+You will need:
 
-## Quick start
+* A browser with WebGPU and `shader-f16` support
+* Enough browser storage for the model files and runtime cache
+* Node.js 22 or newer
+* Corepack
 
-Install the dependencies and start the development server:
+Corepack is included with Node.js 22–24. On newer Node.js releases, you may need to install it separately.
+
+Because inference runs locally, performance depends on your browser, GPU, available memory, and the size of the selected region.
+
+## Run locally
+
+Install the dependencies:
 
 ```bash
 corepack enable
 corepack pnpm install
+```
+
+Start the development server:
+
+```bash
 corepack pnpm run dev
 ```
 
-Open the local address printed by [Vite](https://vite.dev/).
+Open the address printed by Vite.
 
-## Scripts
+The first model load can take longer because the browser needs to download and cache the model files.
 
-Run the full quality check before submitting changes:
+## Checks
+
+Run the complete project check before submitting a change:
 
 ```bash
 corepack pnpm run check
 ```
 
-Build and preview the production site:
-
-```bash
-corepack pnpm run build
-corepack pnpm run start
-```
-
-Run individual dependency-free checks when needed:
+You can also run the repository checks separately:
 
 ```bash
 node scripts/audit-browser-only.mjs
@@ -53,24 +61,53 @@ node scripts/verify-model-manifest.mjs
 node scripts/measure-codebase.mjs
 ```
 
-See [package.json](./package.json) for every script, dependency, development tool, and package-manager version.
+The individual checks verify that the application remains browser-only, validate the pinned model files, and measure the codebase.
 
-## Model
+See [`package.json`](./package.json) for the complete list of commands and dependencies.
 
-The app runs the ONNX conversion of [LFM2.5-VL-450M](https://huggingface.co/LiquidAI/LFM2.5-VL-450M) from [ONNX Community](https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX). It uses [Transformers.js](https://huggingface.co/docs/transformers.js/index), [ONNX Runtime Web](https://onnxruntime.ai/docs/get-started/with-javascript/web.html), and WebGPU for local inference.
+## Production build
 
-The pinned model revision, runtime settings, artifacts, and integrity metadata are in [model-manifest.json](./model-manifest.json).
+Create a production build:
 
-## Deployment
+```bash
+corepack pnpm run build
+```
 
-`pnpm run build` creates the static site in [`dist/`](./dist/). The [Vite configuration](./vite.config.ts) uses relative asset URLs, so the site can be deployed at a domain root or subpath.
+Preview it locally:
 
-## Documentation
+```bash
+corepack pnpm run start
+```
 
-- [Browser inference architecture](./docs/browser-inference.md)
-- [Package scripts and dependencies](./package.json)
-- [Model manifest](./model-manifest.json)
+The generated static site is written to [`dist/`](./dist/).
 
-The interface is built with [React](https://react.dev/), [Mantine](https://mantine.dev/), [XState](https://stately.ai/docs/xstate), [Comlink](https://github.com/GoogleChromeLabs/comlink), [Valibot](https://valibot.dev/), and [react-image-crop](https://github.com/DominicTobias/react-image-crop).
+Vite is configured to use relative asset paths, so the build can be hosted at either a domain root or a nested path.
 
-[Back to top](#lfm25-vl-selected-region-classifier)
+## Model configuration
+
+Model configuration is pinned in [`model-manifest.json`](./model-manifest.json), including:
+
+* the Hugging Face revision;
+* ONNX artifacts;
+* runtime options;
+* integrity information.
+
+Update the manifest whenever the model revision or runtime configuration changes.
+
+## Architecture
+
+The inference path uses:
+
+* [Transformers.js](https://huggingface.co/docs/transformers.js/index) for model loading and preprocessing
+* [ONNX Runtime Web](https://onnxruntime.ai/docs/get-started/with-javascript/web.html) for browser inference
+* WebGPU for GPU execution
+
+The interface is built with React and Mantine. XState manages application state, Comlink handles worker communication, Valibot validates data, and `react-image-crop` provides region selection.
+
+For a detailed description of the inference flow, see [`docs/browser-inference.md`](./docs/browser-inference.md).
+
+## Project documentation
+
+* [Browser inference architecture](./docs/browser-inference.md)
+* [Scripts and dependencies](./package.json)
+* [Model manifest](./model-manifest.json)
