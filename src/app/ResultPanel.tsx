@@ -119,7 +119,7 @@ export function ResultPanel({ result, image }: Props) {
             />
             <SimpleGrid cols={2}>
               <Metric
-                label="Token confidence"
+                label="Token probability"
                 value={formatPercent(result.tokenProbability)}
               />
               <Metric
