@@ -11,3 +11,48 @@ index bb7b32717a42475a5f66411a33d5e5964dfda3e2..1bf464c9a4f69238fdf308ff00804947
  }
  function tokenize(source, options = {}) {
    const tokens = [];
+@@ -19833,11 +19833,15 @@ var GreedySampler = class extends LogitsSampler {
+   /**
+    * Sample the maximum probability of a given logits tensor.
+    * @param {Tensor} logits
+-   * @returns {Promise<[bigint, number][]>} An array with a single tuple, containing the index of the maximum value and a meaningless score (since this is a greedy search).
++   * @returns {Promise<[bigint, number][]>} An array with a single tuple containing the index and log-probability of the maximum value.
+    */
+   async sample(logits) {
+-    const argmax = max(logits.data)[1];
+-    return [[BigInt(argmax), 0]];
++    const [maximum, argmax] = max(logits.data);
++    let denominator = 0;
++    for (const value of logits.data) {
++      denominator += Math.exp(value - maximum);
++    }
++    return [[BigInt(argmax), -Math.log(denominator)]];
+   }
+ };
+ var MultinomialSampler = class extends LogitsSampler {
+@@ -20823,6 +20827,7 @@ var PreTrainedModel = class extends Callable {
+     const numInputs = model_inputs[model_input_name].dims.at(0);
+     const sampler = LogitsSampler.getSampler(generation_config);
+     const scores = new Array(numInputs).fill(0);
++    const token_logprobs = Array.from({ length: numInputs }, () => []);
+     const all_input_ids = input_ids.tolist();
+     if (streamer) {
+       streamer.put(all_input_ids);
+@@ -20855,6 +20860,9 @@ var PreTrainedModel = class extends Callable {
+         for (const [newTokenId, logProb] of sampledTokens) {
+           const bigint = BigInt(newTokenId);
+           scores[batch_idx] += logProb;
++          if (generation_config.output_scores) {
++            token_logprobs[batch_idx].push(logProb);
++          }
+           all_input_ids[batch_idx].push(bigint);
+           generated_input_ids.push([bigint]);
+           break;
+@@ -20892,6 +20900,7 @@ var PreTrainedModel = class extends Callable {
+     if (generation_config.return_dict_in_generate) {
+       return {
+         sequences,
+         past_key_values,
++        token_logprobs,
+         ...attentions,
+         ...return_dict_items

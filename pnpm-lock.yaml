@@ -10,7 +10,7 @@ overrides:
 
 patchedDependencies:
   "@huggingface/transformers@4.2.0":
-    hash: d1e327f30e7b3b106fd2114e384572d5d1042ededd0879267636688a42bbf2d9
+    hash: 3a1dcd22d5de490687218701e8e2530bbc599593df3bfecd605066b42da5acab
     path: patches/@huggingface__transformers@4.2.0.patch
 
 importers:
@@ -18,7 +18,7 @@ importers:
     dependencies:
       "@huggingface/transformers":
         specifier: ~4.2.0
-        version: 4.2.0(patch_hash=d1e327f30e7b3b106fd2114e384572d5d1042ededd0879267636688a42bbf2d9)
+        version: 4.2.0(patch_hash=3a1dcd22d5de490687218701e8e2530bbc599593df3bfecd605066b42da5acab)
       "@mantine/core":
         specifier: ^9.4.2
         version: 9.5.0(@mantine/hooks@9.5.0(react@19.2.8))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -3594,7 +3594,7 @@ snapshots:
 
   "@huggingface/tokenizers@0.1.3": {}
 
-  "@huggingface/transformers@4.2.0(patch_hash=d1e327f30e7b3b106fd2114e384572d5d1042ededd0879267636688a42bbf2d9)":
+  "@huggingface/transformers@4.2.0(patch_hash=3a1dcd22d5de490687218701e8e2530bbc599593df3bfecd605066b42da5acab)":
     dependencies:
       "@huggingface/jinja": 0.5.9
       "@huggingface/tokenizers": 0.1.3

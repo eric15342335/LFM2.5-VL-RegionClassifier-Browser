@@ -429,28 +429,14 @@ function cleanLabel(text: string): string {
   return words.slice(0, 4).join(" ") || "unknown";
 }
 
-function geometricMeanTokenProbability(
-  scores: readonly unknown[],
-  tokenIds: ArrayLike<unknown>
-): {
+function geometricMeanTokenProbability(tokenLogprobs: readonly unknown[]): {
   probability: number | null;
   logprobs: number[];
 } {
-  const logprobs: number[] = [];
-  const count = Math.min(scores.length, tokenIds.length);
-  for (let step = 0; step < count; step += 1) {
-    const data = tensorData(scores[step]);
-    const tokenId = Number(tokenIds[step]);
-    if (!Number.isInteger(tokenId) || tokenId < 0 || tokenId >= data.length) continue;
-    let maximum = Number.NEGATIVE_INFINITY;
-    for (let index = 0; index < data.length; index += 1)
-      maximum = Math.max(maximum, Number(data[index]));
-    let denominator = 0;
-    for (let index = 0; index < data.length; index += 1)
-      denominator += Math.exp(Number(data[index]) - maximum);
-    const logprob = Number(data[tokenId]) - maximum - Math.log(denominator);
-    if (Number.isFinite(logprob)) logprobs.push(roundTo(logprob, 6));
-  }
+  const logprobs = tokenLogprobs
+    .map(Number)
+    .filter(Number.isFinite)
+    .map((value) => roundTo(value, 6));
   if (!logprobs.length) return { probability: null, logprobs };
   const mean = logprobs.reduce((sum, value) => sum + value, 0) / logprobs.length;
   return { probability: roundTo(Math.exp(mean), 6), logprobs };
@@ -567,11 +553,11 @@ async function generate(
   });
   const rawOutput = String(decoded?.[0] ?? "");
   const tokenIds = tensorData(generatedTensor);
+  const tokenLogprobs = Array.isArray(generatedRecord?.token_logprobs)
+    ? generatedRecord.token_logprobs[0]
+    : [];
   const scoreResult = config.logprobs
-    ? geometricMeanTokenProbability(
-        Array.isArray(generatedRecord?.scores) ? generatedRecord.scores : [],
-        tokenIds
-      )
+    ? geometricMeanTokenProbability(Array.isArray(tokenLogprobs) ? tokenLogprobs : [])
     : { probability: null, logprobs: [] };
   if (!rawOutput && tokenIds.length === 0)
     throw new Error("Warm-up/generation produced no finite output");
