@@ -13,14 +13,25 @@ describe("model manifest", () => {
     }
   });
 
-  it("keeps the declared runtime version and verified download size consistent", () => {
-    const expectedBytes = manifest.artifacts.reduce(
-      (total, artifact) => total + (artifact.expected_bytes ?? 0),
-      0
-    );
+  it("contains every plain-Q4 component and external data file", () => {
+    const q4Paths = manifest.artifacts
+      .filter((artifact) => artifact.dtype === "q4")
+      .map((artifact) => artifact.path);
 
+    expect(q4Paths).toEqual(
+      expect.arrayContaining([
+        "onnx/embed_tokens_q4.onnx",
+        "onnx/embed_tokens_q4.onnx_data",
+        "onnx/vision_encoder_q4.onnx",
+        "onnx/vision_encoder_q4.onnx_data",
+        "onnx/decoder_model_merged_q4.onnx",
+        "onnx/decoder_model_merged_q4.onnx_data",
+      ])
+    );
+    expect(q4Paths).toHaveLength(6);
+  });
+
+  it("keeps the declared runtime version consistent", () => {
     expect(manifest.transformers_js_version).toBe(transformerVersion);
-    expect(manifest.estimated_download_bytes).toBe(576_645_711);
-    expect(manifest.estimated_download_bytes).toBe(expectedBytes);
   });
 });

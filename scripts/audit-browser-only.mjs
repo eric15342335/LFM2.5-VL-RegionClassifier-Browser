@@ -96,12 +96,9 @@ for (const artifact of manifest.artifacts ?? []) {
 }
 if (
   manifest.integrity_status === "verified" &&
-  manifest.artifacts.some(
-    (artifact) => !artifact.sha256 || !Number.isFinite(artifact.expected_bytes)
-  )
-) {
-  failures.push("verified manifest has artifacts without byte lengths or SHA-256 values");
-}
+  manifest.artifacts.some((artifact) => !artifact.sha256)
+)
+  failures.push("verified manifest has artifacts without SHA-256 values");
 
 if (failures.length) {
   console.error("Browser-only audit failed:\n- " + failures.join("\n- "));

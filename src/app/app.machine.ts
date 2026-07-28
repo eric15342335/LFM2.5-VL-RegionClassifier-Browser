@@ -256,7 +256,7 @@ export const appMachine = setup({
       selection: () => null,
       progress: () => null,
       technicalError: () => null,
-      message: () => "Decoding and retaining the image in this browser...",
+      message: () => "Loading the image...",
     }),
     setSelection: assign({
       selection: ({ event }) =>

@@ -118,7 +118,7 @@ describe("App", () => {
     expect(pickerClick).toHaveBeenCalledTimes(2);
   });
 
-  it("continues loading the same selected file through the Dropzone picker", async () => {
+  it("loads the file selected through the Dropzone picker", async () => {
     const client = new UiClient();
     const { container } = renderApp(client);
     const file = new File([new Uint8Array(128)], "sample.png", { type: "image/png" });
@@ -159,7 +159,7 @@ describe("App", () => {
     await screen.findByText("Model ready");
   });
 
-  it("retains the existing rejection notification copy", async () => {
+  it("shows the image rejection notification", async () => {
     const client = new UiClient();
     const show = vi.spyOn(notifications, "show");
     const { container } = renderApp(client);
@@ -199,7 +199,7 @@ describe("App", () => {
     expect(await screen.findByText("Browser inference unavailable")).toBeTruthy();
     expect(show).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: /retry capability check/i }));
+    await userEvent.click(screen.getByRole("button", { name: /try again/i }));
     await waitFor(() => expect(client.probe).toHaveBeenCalledTimes(2));
     expect(show).not.toHaveBeenCalled();
     show.mockRestore();

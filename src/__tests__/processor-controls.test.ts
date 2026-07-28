@@ -8,7 +8,7 @@ import {
 } from "../processor-controls";
 
 describe("LFM2-VL processor controls", () => {
-  it("uses constructor-time snake-case controls and derives the intended padding", () => {
+  it("applies snake_case processor controls and calculates padding", () => {
     const controls = lfm2VlProcessorControls(INFERENCE_CONFIG);
 
     expect(controls).toEqual({

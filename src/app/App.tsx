@@ -66,7 +66,8 @@ export function App({
   const dropzoneOpenRef = useRef<(() => void) | null>(null);
   const lastErrorRef = useRef<string | null>(null);
   const context = snapshot.context;
-  const modelSize = formatModelSize(INFERENCE_CONFIG.model.estimated_download_bytes);
+  const downloadBytes = context.capability?.storage?.download;
+  const modelSize = downloadBytes === undefined ? "size unknown" : formatModelSize(downloadBytes);
   const action = primaryActionFor(snapshot, modelSize);
   const busy =
     snapshot.hasTag("modelLoading") ||
@@ -301,7 +302,7 @@ export function App({
                   variant="light"
                   onClick={() => send({ type: "RETRY_PROBE" })}
                 >
-                  Retry capability check
+                  Try again
                 </Button>
               </Alert>
             )}

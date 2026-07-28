@@ -96,13 +96,20 @@ type RuntimeBackends = { onnx?: RuntimeOnnxBackend };
 type SliceableTensor = {
   slice(axis: null, range: [number | null, number | null]): unknown;
 };
+type DtypeProfile = InferenceConfig["model"]["dtype"];
+
+const q4DtypeProfile = {
+  embed_tokens: "q4",
+  vision_encoder: "q4",
+  decoder_model_merged: "q4",
+} as const satisfies DtypeProfile;
 
 const sources = new Map<string, DecodedImage & { descriptor: ImageDescriptor }>();
 const stoppingCriteria = new InterruptableStoppingCriteria();
 
 let model: RuntimeModel | null = null;
 let processor: RuntimeProcessor | null = null;
-let preparedRevision: string | null = null;
+let preparedModelKey: string | null = null;
 let preparePromise: Promise<void> | null = null;
 let currentJobId: number | null = null;
 type QueuedClassification = WorkerClassifyRequest & {
@@ -196,6 +203,47 @@ function recordOfNumbers(value: unknown): Record<string, number> | undefined {
   return Object.keys(output).length ? output : undefined;
 }
 
+function selectedArtifactPaths(config: InferenceConfig, dtype: DtypeProfile): Set<string> {
+  const dtypeByRole = {
+    embedding: dtype.embed_tokens,
+    vision: dtype.vision_encoder,
+    decoder: dtype.decoder_model_merged,
+  } as const;
+  return new Set(
+    config.model.artifacts.flatMap((artifact) => {
+      const selectedDtype = dtypeByRole[artifact.role as keyof typeof dtypeByRole];
+      return !artifact.dtype || artifact.dtype === selectedDtype ? [artifact.path] : [];
+    })
+  );
+}
+
+async function modelDownloadBytes(config: InferenceConfig, dtype: DtypeProfile): Promise<number> {
+  const repository = config.model.repository.split("/").map(encodeURIComponent).join("/");
+  const revision = encodeURIComponent(config.model.revision);
+  const response = await fetch(
+    `https://huggingface.co/api/models/${repository}/tree/${revision}?recursive=true&expand=true`
+  );
+  if (!response.ok) throw new Error(`Hugging Face metadata request failed (${response.status})`);
+  const entries = (await response.json()) as {
+    path?: unknown;
+    size?: unknown;
+    lfs?: { size?: unknown };
+  }[];
+  const sizes = new Map(
+    entries.flatMap((entry) => {
+      const size = Number(entry.lfs?.size ?? entry.size);
+      return typeof entry.path === "string" && Number.isFinite(size) ? [[entry.path, size]] : [];
+    })
+  );
+  let total = 0;
+  for (const path of selectedArtifactPaths(config, dtype)) {
+    const size = sizes.get(path);
+    if (size === undefined) throw new Error(`Hugging Face metadata omitted ${path}`);
+    total += size;
+  }
+  return total;
+}
+
 async function probe(config: InferenceConfig): Promise<BrowserCapability> {
   if (successfulCapability) return successfulCapability;
 
@@ -222,19 +270,6 @@ async function probe(config: InferenceConfig): Promise<BrowserCapability> {
   } catch {
     estimate = undefined;
   }
-  if (estimate) {
-    const quota = estimate.quota;
-    const usage = estimate.usage;
-    const available =
-      quota === undefined || usage === undefined ? undefined : Math.max(0, quota - usage);
-    capability.storage = {
-      quota,
-      usage,
-      available,
-      required: Math.ceil(config.model.estimated_download_bytes * 1.15),
-    };
-  }
-
   const adapter = await navigator.gpu.requestAdapter({
     powerPreference: "high-performance",
   });
@@ -251,11 +286,32 @@ async function probe(config: InferenceConfig): Promise<BrowserCapability> {
     }
   ).requestAdapterInfo;
   if (getInfo) capability.adapterInfo = await getInfo.call(adapter).catch(() => undefined);
-  if (!capability.shaderF16) {
-    capability.reason = "The WebGPU adapter does not support shader-f16";
-    return capability;
-  }
+  const device = await adapter.requestDevice({
+    requiredFeatures: capability.shaderF16 ? ["shader-f16"] : [],
+  });
+  capability.deviceAcquired = true;
+  device.destroy();
 
+  const download = await modelDownloadBytes(config, dtypeFor(capability, config)).catch(
+    () => undefined
+  );
+  if (download !== undefined)
+    capability.storage = {
+      download,
+      required: Math.ceil(download * 1.15),
+    };
+  if (estimate) {
+    const quota = estimate.quota;
+    const usage = estimate.usage;
+    const available =
+      quota === undefined || usage === undefined ? undefined : Math.max(0, quota - usage);
+    capability.storage = {
+      ...(capability.storage ?? {}),
+      quota,
+      usage,
+      available,
+    } as BrowserCapability["storage"];
+  }
   const requiredBytes = capability.storage?.required;
   const availableBytes = capability.storage?.available;
   if (
@@ -267,11 +323,6 @@ async function probe(config: InferenceConfig): Promise<BrowserCapability> {
     return capability;
   }
 
-  const device = await adapter.requestDevice({
-    requiredFeatures: ["shader-f16"],
-  });
-  capability.deviceAcquired = true;
-  device.destroy();
   capability.supported = true;
   successfulCapability = capability;
   return capability;
@@ -284,6 +335,14 @@ function configureRuntime(): void {
   env.allowRemoteModels = true;
   env.allowLocalModels = false;
   env.useBrowserCache = true;
+}
+
+function dtypeFor(capability: BrowserCapability, config: InferenceConfig): DtypeProfile {
+  return capability.shaderF16 ? config.model.dtype : q4DtypeProfile;
+}
+
+function modelKey(config: InferenceConfig, dtype: DtypeProfile): string {
+  return `${config.model.revision}:${JSON.stringify(dtype)}`;
 }
 
 function assertEffectiveProcessorControls(config: InferenceConfig): void {
@@ -337,7 +396,7 @@ function subscribeToDeviceLoss(): void {
   if (!device?.lost) return;
   deviceLossSubscribed = true;
   void device.lost.then((info) => {
-    preparedRevision = null;
+    preparedModelKey = null;
     model = null;
     processor = null;
     successfulCapability = null;
@@ -347,7 +406,6 @@ function subscribeToDeviceLoss(): void {
 }
 
 async function prepareModel(id: number, config: InferenceConfig, warmup = true): Promise<void> {
-  if (model && processor && preparedRevision === config.model.revision) return;
   if (preparePromise) return preparePromise;
 
   preparePromise = (async () => {
@@ -355,12 +413,17 @@ async function prepareModel(id: number, config: InferenceConfig, warmup = true):
     const capability = await probe(config);
     if (!capability.supported)
       throw new Error(capability.reason ?? "Browser WebGPU inference is unsupported");
+    const dtype = dtypeFor(capability, config);
+    const key = modelKey(config, dtype);
+    if (model && processor && preparedModelKey === key) return;
     progress(
       id,
       "probe",
-      "WebGPU capability check passed",
+      capability.shaderF16
+        ? "WebGPU capability check passed"
+        : "WebGPU capability check passed; using Q4 compatibility profile",
       4,
-      capability as unknown as Record<string, unknown>
+      { ...capability, dtype_profile: dtype } as unknown as Record<string, unknown>
     );
     const baseOptions = {
       revision: config.model.revision,
@@ -371,15 +434,15 @@ async function prepareModel(id: number, config: InferenceConfig, warmup = true):
       AutoModelForImageTextToText.from_pretrained(config.model.repository, {
         ...baseOptions,
         device: "webgpu",
-        dtype: config.model.dtype,
+        dtype,
       }),
     ]);
     processor = loadedProcessor as unknown as RuntimeProcessor;
     model = loadedModel as unknown as RuntimeModel;
     configureProcessorParityControls(config);
-    preparedRevision = config.model.revision;
+    preparedModelKey = key;
     subscribeToDeviceLoss();
-    progress(id, "compile", "Model sessions created", 85);
+    progress(id, "compile", "Model loaded", 85);
     if (warmup) await warmupModel(id, config);
     progress(id, "ready", "Browser model is ready", 100);
   })();
@@ -389,7 +452,7 @@ async function prepareModel(id: number, config: InferenceConfig, warmup = true):
   } catch (error) {
     model = null;
     processor = null;
-    preparedRevision = null;
+    preparedModelKey = null;
     successfulCapability = null;
     throw error;
   } finally {
@@ -565,15 +628,14 @@ async function generate(
 }
 
 async function warmupModel(id: number, config: InferenceConfig): Promise<void> {
-  progress(id, "warmup", "Running exact-path warm-up inference", 90);
+  progress(id, "warmup", "Warming up the model", 90);
   const width = 32;
   const height = 32;
   const data = new Uint8Array(width * height * 3).fill(127);
   const image = new RawImage(data, width, height, 3);
   const warmupConfig = { ...config, maxOutputTokens: 1, logprobs: false };
   const result = await generate(image, warmupConfig);
-  if (!result.rawOutput && result.outputTokens < 1)
-    throw new Error("Warm-up produced no output token");
+  if (result.outputTokens < 1) throw new Error("Warm-up produced no output token");
   const imagePlaceholderCount = Number(result.diagnostics.image_placeholder_count);
   if (!Number.isInteger(imagePlaceholderCount) || imagePlaceholderCount !== config.imageTokens) {
     throw new ProcessorConfigurationError(
@@ -640,7 +702,7 @@ async function classifyRequest(request: QueuedClassification): Promise<Classific
   const source = sources.get(request.imageId);
   if (!source) throw new Error("Browser image data is missing; load the image again");
   currentJobId = request.jobId;
-  progress(request.id, "accepted", "Browser classification accepted", 2, {
+  progress(request.id, "accepted", "Starting classification", 2, {
     job_id: request.jobId,
   });
   const preprocessStarted = performance.now();
@@ -650,11 +712,11 @@ async function classifyRequest(request: QueuedClassification): Promise<Classific
   progress(
     request.id,
     "crop",
-    "Selection cropped and masked in the browser",
+    "Preparing the selected region",
     35,
     crop.details as unknown as Record<string, unknown>
   );
-  progress(request.id, "inference", "Running WebGPU inference", 55);
+  progress(request.id, "inference", "Classifying the selected region", 55);
   const inferenceStarted = performance.now();
   const generation = await generate(rawImage, request.config);
   const inferenceMs = performance.now() - inferenceStarted;
@@ -732,7 +794,7 @@ function enqueueClassification(request: QueuedClassification): void {
   if (pendingRequest)
     abortQueued(pendingRequest, "Classification was superseded by a newer request");
   pendingRequest = request;
-  progress(request.id, "queued", "Queued behind the active browser generation", 45, {
+  progress(request.id, "queued", "Waiting for the current classification to finish", 45, {
     queued_ahead: 1,
   });
 }
@@ -747,7 +809,7 @@ async function disposeRuntime(): Promise<void> {
   await model?.dispose?.();
   model = null;
   processor = null;
-  preparedRevision = null;
+  preparedModelKey = null;
   preparePromise = null;
   deviceLossSubscribed = false;
   successfulCapability = null;

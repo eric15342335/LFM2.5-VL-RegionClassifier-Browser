@@ -124,7 +124,8 @@ export interface BrowserCapability {
     quota?: number;
     usage?: number;
     available?: number;
-    required: number;
+    download?: number;
+    required?: number;
   };
   adapterInfo?: Record<string, unknown>;
   limits?: Record<string, number>;

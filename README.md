@@ -17,7 +17,7 @@ The application uses the ONNX version of [LFM2.5-VL-450M](https://huggingface.co
 
 You will need:
 
-- A browser with WebGPU and `shader-f16` support
+- A browser with WebGPU (`shader-f16` is optional; other devices use the Q4 compatibility profile)
 - Enough browser storage for the model files and runtime cache
 - Node.js 22 or newer
 - Corepack

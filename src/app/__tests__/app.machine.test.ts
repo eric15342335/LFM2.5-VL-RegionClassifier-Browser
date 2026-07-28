@@ -17,7 +17,6 @@ const capability: BrowserCapability = {
   adapterAcquired: true,
   deviceAcquired: true,
   shaderF16: true,
-  storage: { required: 573_000_000, available: 1_000_000_000 },
 };
 
 const descriptor: ImageDescriptor = {
@@ -141,7 +140,7 @@ describe("appMachine", () => {
   it("coordinates model, image, selection, and classification workflows", async () => {
     const { actor, client } = await startOperational();
 
-    expect(primaryActionFor(actor.getSnapshot(), "~573 MB").intent).toBe("load-model");
+    expect(primaryActionFor(actor.getSnapshot(), "model size").intent).toBe("load-model");
 
     actor.send({ type: "LOAD_MODEL" });
     actor.send({ type: "FILE_SELECTED", file: file() });
@@ -152,13 +151,13 @@ describe("appMachine", () => {
     );
 
     expect(client.loadedImages).toEqual([descriptor.id]);
-    expect(primaryActionFor(actor.getSnapshot(), "~573 MB").intent).toBe("focus-selection");
+    expect(primaryActionFor(actor.getSnapshot(), "model size").intent).toBe("focus-selection");
 
     actor.send({
       type: "SELECTION_CHANGED",
       selection: { x1: 0.1, y1: 0.2, x2: 0.5, y2: 0.6 },
     });
-    expect(primaryActionFor(actor.getSnapshot(), "~573 MB").intent).toBe("classify");
+    expect(primaryActionFor(actor.getSnapshot(), "model size").intent).toBe("classify");
 
     actor.send({ type: "CLASSIFY" });
     await waitFor(actor, (snapshot) => snapshot.hasTag("classificationSuccess"));
@@ -239,7 +238,7 @@ describe("appMachine", () => {
 
     expect("modelPrepared" in actor.getSnapshot().context).toBe(false);
     expect(actor.getSnapshot().context.technicalError).toContain("GPU adapter reset");
-    expect(primaryActionFor(actor.getSnapshot(), "~573 MB").intent).toBe("load-model");
+    expect(primaryActionFor(actor.getSnapshot(), "model size").intent).toBe("load-model");
 
     actor.send({
       type: "PROGRESS",
@@ -252,7 +251,7 @@ describe("appMachine", () => {
       },
     });
     await waitFor(actor, (snapshot) => snapshot.hasTag("modelReady"));
-    expect(primaryActionFor(actor.getSnapshot(), "~573 MB").intent).toBe("choose-image");
+    expect(primaryActionFor(actor.getSnapshot(), "model size").intent).toBe("choose-image");
     actor.stop();
   });
 });
