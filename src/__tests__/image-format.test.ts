@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { detectImageFormat, imageFrameCount, validateImageContainer } from "../image-format";
+import {
+  ACCEPTED_IMAGE_MIME_TYPES,
+  detectImageFormat,
+  imageFrameCount,
+  SUPPORTED_IMAGE_FORMATS_LABEL,
+  validateImageContainer,
+} from "../image-format";
 
 const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -37,6 +43,11 @@ function animatedWebp(): Uint8Array {
 }
 
 describe("image container validation", () => {
+  it("shares the accepted MIME types and display label with the UI", () => {
+    expect(ACCEPTED_IMAGE_MIME_TYPES).toEqual(["image/jpeg", "image/png", "image/webp"]);
+    expect(SUPPORTED_IMAGE_FORMATS_LABEL).toBe("JPEG, PNG, or WebP");
+  });
+
   it("recognizes supported signatures", () => {
     expect(detectImageFormat(new Uint8Array([0xff, 0xd8, 0xff, 0x00]))).toBe("jpeg");
     expect(detectImageFormat(Uint8Array.from(pngSignature))).toBe("png");

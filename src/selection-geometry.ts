@@ -59,6 +59,7 @@ export function isUsableSelection(
 ): boolean {
   const normalized = canonicalSelection(selection);
   return (
-    normalized.x2 - normalized.x1 >= minimumSpan && normalized.y2 - normalized.y1 >= minimumSpan
+    stable(normalized.x2 - normalized.x1) >= minimumSpan &&
+    stable(normalized.y2 - normalized.y1) >= minimumSpan
   );
 }

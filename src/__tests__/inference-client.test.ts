@@ -35,14 +35,12 @@ function result(label = "cat"): ClassificationResult {
       paddingRatio: 0.08,
       resampling: "bilinear",
       prepareMs: 1,
-      encodedJpegBytes: 100,
     },
     generation: {
       rawOutput: label,
       finishReason: "stop",
       tokenLogprobs: [-0.2],
       usage: { prompt_tokens: 100, completion_tokens: 1, total_tokens: 101 },
-      engineTimings: { webgpuInferenceMs: 5 },
       processor: { image_placeholder_count: 64 },
     },
     performance: {
@@ -74,17 +72,10 @@ function baseApi(overrides: Partial<WorkerApi> = {}): WorkerApi {
       shaderF16: true,
     }),
     prepare: async () => undefined,
-    loadImage: async (image) => ({ width: image.width, height: image.height, bytes: image.bytes }),
+    loadImage: async () => undefined,
     releaseImage: async () => true,
     classify: async () => result(),
     cancel: async () => undefined,
-    status: async () => ({
-      prepared: true,
-      revision: INFERENCE_CONFIG.model.revision,
-      images: 0,
-      activeJobId: null,
-      pendingJobId: null,
-    }),
     setDeviceLostListener: async () => undefined,
     dispose: async () => undefined,
     ...overrides,
@@ -103,7 +94,6 @@ describe("Comlink inference client lifecycle", () => {
         api: baseApi({
           loadImage: async (image) => {
             replayed.push(`${current}:${image.id}`);
-            return { width: image.width, height: image.height, bytes: image.bytes };
           },
           classify: async () => {
             if (current === 1) throw new Error("device failed");

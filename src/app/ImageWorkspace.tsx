@@ -10,10 +10,11 @@ import {
   Text,
   Title,
 } from "@mantine/core";
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import ReactCrop, { type PercentCrop } from "react-image-crop";
 import {
   isUsableSelection,
+  MINIMUM_SELECTION_SPAN,
   normalizedToPercentCrop,
   percentCropToNormalized,
 } from "../selection-geometry";
@@ -52,13 +53,15 @@ export function ImageWorkspace({
   onSelectionComplete,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const drawingRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const x1Ref = useRef<HTMLInputElement>(null);
+  const cancelledCropCompletionRef = useRef(false);
+  const selectionBeforeDragRef = useRef<NormalizedSelection | null>(null);
   const [transientCrop, setTransientCrop] = useState<PercentCrop | undefined>();
   const [coordinates, setCoordinates] = useState({ x1: 10, y1: 10, x2: 90, y2: 90 });
+  const [renderedCanvasSize, setRenderedCanvasSize] = useState({ width: 0, height: 0 });
   const crop = transientCrop ?? (selection ? normalizedToPercentCrop(selection) : undefined);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -72,13 +75,34 @@ export function ImageWorkspace({
       return;
     }
 
-    const scale = Math.min(1, 1200 / image.bitmap.width, 1200 / image.bitmap.height);
-    const width = Math.max(1, Math.round(image.bitmap.width * scale));
-    const height = Math.max(1, Math.round(image.bitmap.height * scale));
+    const width = image.previewBitmap.width;
+    const height = image.previewBitmap.height;
     canvas.width = width;
     canvas.height = height;
     context.clearRect(0, 0, width, height);
-    context.drawImage(image.bitmap, 0, 0, width, height);
+    context.drawImage(image.previewBitmap, 0, 0);
+  }, [image]);
+
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !image) {
+      setRenderedCanvasSize({ width: 0, height: 0 });
+      return;
+    }
+
+    const updateRenderedCanvasSize = () => {
+      const { width, height } = canvas.getBoundingClientRect();
+      setRenderedCanvasSize((current) =>
+        current.width === width && current.height === height ? current : { width, height }
+      );
+    };
+
+    updateRenderedCanvasSize();
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(updateRenderedCanvasSize);
+    observer.observe(canvas);
+    return () => observer.disconnect();
   }, [image]);
 
   useEffect(() => {
@@ -101,69 +125,47 @@ export function ImageWorkspace({
     setTransientCrop(percentCrop);
 
     const next = percentCropToNormalized(percentCrop);
-    if (isUsableSelection(next) && !selectionsEqual(next, selection)) onSelectionChange(next);
+    if (selection && isUsableSelection(next) && !selectionsEqual(next, selection)) {
+      onSelectionChange(next);
+    }
   };
 
   const commitCrop = (percentCrop: PercentCrop) => {
+    if (cancelledCropCompletionRef.current) {
+      cancelledCropCompletionRef.current = false;
+      return;
+    }
+
+    selectionBeforeDragRef.current = null;
     const next = percentCropToNormalized(percentCrop);
+    if (!isUsableSelection(next)) return;
+
     setTransientCrop(undefined);
-
-    if (isUsableSelection(next)) {
-      onSelectionComplete(next);
-    } else if (selection !== null) onSelectionChange(null);
+    onSelectionComplete(next);
   };
 
-  const pointerPosition = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    return {
-      x: Math.max(0, Math.min(100, ((event.clientX - bounds.left) / bounds.width) * 100)),
-      y: Math.max(0, Math.min(100, ((event.clientY - bounds.top) / bounds.height) * 100)),
-    };
-  };
+  const discardIncompleteCrop = () => {
+    const currentCrop = transientCrop ?? crop;
+    if (!currentCrop || isUsableSelection(percentCropToNormalized(currentCrop))) return;
 
-  const cropFromPointer = (event: ReactPointerEvent<HTMLCanvasElement>): PercentCrop | null => {
-    const start = drawingRef.current;
-    if (!start || start.pointerId !== event.pointerId) return null;
-    const end = pointerPosition(event);
-    return {
-      unit: "%",
-      x: Math.min(start.x, end.x),
-      y: Math.min(start.y, end.y),
-      width: Math.abs(end.x - start.x),
-      height: Math.abs(end.y - start.y),
-    };
-  };
-
-  const beginDrawing = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (disabled || crop) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const start = pointerPosition(event);
-    drawingRef.current = { pointerId: event.pointerId, ...start };
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    setTransientCrop({ unit: "%", x: start.x, y: start.y, width: 0, height: 0 });
-  };
-
-  const continueDrawing = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    const next = cropFromPointer(event);
-    if (!next) return;
-    event.preventDefault();
-    setTransientCrop(next);
-  };
-
-  const finishDrawing = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    const next = cropFromPointer(event);
-    if (!next) return;
-    event.preventDefault();
-    drawingRef.current = null;
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
-    commitCrop(next);
-  };
-
-  const cancelDrawing = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (drawingRef.current?.pointerId !== event.pointerId) return;
-    drawingRef.current = null;
     setTransientCrop(undefined);
+    if (selection !== null) onSelectionChange(null);
+  };
+
+  const beginCropDrag = () => {
+    selectionBeforeDragRef.current = selection;
+  };
+
+  const finishCropDrag = (event: PointerEvent) => {
+    if (event.type === "pointercancel") {
+      cancelledCropCompletionRef.current = true;
+      setTransientCrop(undefined);
+      if (selectionBeforeDragRef.current) onSelectionChange(selectionBeforeDragRef.current);
+      selectionBeforeDragRef.current = null;
+      return;
+    }
+
+    discardIncompleteCrop();
   };
 
   const updateCoordinate = (key: keyof NormalizedSelection, value: string | number) => {
@@ -206,7 +208,7 @@ export function ImageWorkspace({
             c="dimmed"
           >
             {image
-              ? `${image.descriptor.name} · ${image.bitmap.width} × ${image.bitmap.height} · ${formatBytes(image.file.size)}`
+              ? `${image.descriptor.name} · ${image.descriptor.width} × ${image.descriptor.height} · ${formatBytes(image.descriptor.bytes)}`
               : "Choose a JPEG, PNG, or WebP image. Processing stays in this browser."}
           </Text>
         </Box>
@@ -220,8 +222,8 @@ export function ImageWorkspace({
               crop={crop}
               disabled={disabled}
               keepSelection
-              minWidth={10}
-              minHeight={10}
+              minWidth={renderedCanvasSize.width * MINIMUM_SELECTION_SPAN}
+              minHeight={renderedCanvasSize.height * MINIMUM_SELECTION_SPAN}
               ariaLabels={{
                 cropArea: "Rectangular image selection",
                 nwDragHandle: "Resize selection from top left",
@@ -235,15 +237,13 @@ export function ImageWorkspace({
               }}
               onChange={(_, percentCrop) => updateCrop(percentCrop)}
               onComplete={(_, percentCrop) => commitCrop(percentCrop)}
+              onDragStart={beginCropDrag}
+              onDragEnd={finishCropDrag}
             >
               <canvas
                 ref={canvasRef}
                 className="image-canvas"
                 aria-label="Image selection workspace"
-                onPointerDown={beginDrawing}
-                onPointerMove={continueDrawing}
-                onPointerUp={finishDrawing}
-                onPointerCancel={cancelDrawing}
               />
             </ReactCrop>
           )}

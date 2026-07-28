@@ -4,7 +4,7 @@
 
 The application has two execution domains:
 
-1. The React main thread owns presentation, normalized selection coordinates, the XState workflow actor, retained `File` and `ImageBitmap` objects, and diagnostics.
+1. The React main thread owns presentation, normalized selection coordinates, the XState workflow actor, the original image descriptor, a bounded preview `ImageBitmap`, and diagnostics. `BrowserInferenceClient` privately retains the original `File` for worker recovery.
 2. A dedicated module worker owns image byte decoding for inference, deterministic crop/mask/resize preprocessing, Transformers.js model loading, WebGPU execution, generation parsing, scoring, cancellation checkpoints, and device-loss observation.
 
 `BrowserInferenceClient` is the only main-thread module that creates or terminates the worker. Comlink supplies typed RPC, callback proxies, exception propagation, and transferable `ArrayBuffer` handling. The client deliberately retains a thin lifecycle layer for hard termination, timeouts, one recovery attempt, and replaying retained images after worker recreation.
@@ -23,7 +23,6 @@ The application has two execution domains:
 - `releaseImage(imageId)`
 - `classify(request, onProgress)`
 - `cancel(jobId)`
-- `status()`
 - `setDeviceLostListener(listener)`
 - `dispose()`
 

@@ -286,7 +286,7 @@ function configureRuntime(): void {
   env.useBrowserCache = true;
 }
 
-function effectiveProcessorWarnings(config: InferenceConfig): string[] {
+function assertEffectiveProcessorControls(config: InferenceConfig): void {
   const target = requiredProcessor().image_processor;
   if (!target) throw new ProcessorConfigurationError("LFM2-VL image processor is unavailable");
 
@@ -311,10 +311,9 @@ function effectiveProcessorWarnings(config: InferenceConfig): string[] {
       `LFM2-VL processor controls were not applied: ${rendered}`
     );
   }
-  return [];
 }
 
-function configureProcessorParityControls(config: InferenceConfig): string[] {
+function configureProcessorParityControls(config: InferenceConfig): void {
   const activeProcessor = requiredProcessor();
   const currentImageProcessor = activeProcessor.image_processor;
   const currentConfig = asRecord(currentImageProcessor?.config);
@@ -329,7 +328,7 @@ function configureProcessorParityControls(config: InferenceConfig): string[] {
     ...currentConfig,
     ...controls,
   }) as unknown as RuntimeImageProcessor;
-  return effectiveProcessorWarnings(config);
+  assertEffectiveProcessorControls(config);
 }
 
 function subscribeToDeviceLoss(): void {
@@ -377,16 +376,12 @@ async function prepareModel(id: number, config: InferenceConfig, warmup = true):
     ]);
     processor = loadedProcessor as unknown as RuntimeProcessor;
     model = loadedModel as unknown as RuntimeModel;
-    const warnings = configureProcessorParityControls(config);
+    configureProcessorParityControls(config);
     preparedRevision = config.model.revision;
     subscribeToDeviceLoss();
-    progress(id, "compile", "Model sessions created", 85, {
-      processor_warnings: warnings,
-    });
-    if (warmup) await warmupModel(id, config, warnings);
-    progress(id, "ready", "Browser model is ready", 100, {
-      processor_warnings: warnings,
-    });
+    progress(id, "compile", "Model sessions created", 85);
+    if (warmup) await warmupModel(id, config);
+    progress(id, "ready", "Browser model is ready", 100);
   })();
 
   try {
@@ -444,8 +439,7 @@ function geometricMeanTokenProbability(tokenLogprobs: readonly unknown[]): {
 
 function processorDiagnostics(
   inputs: ProcessorInputs,
-  prepared: ModelImage,
-  warnings: string[]
+  prepared: ModelImage
 ): Record<string, unknown> {
   const inputIds = inputs?.input_ids;
   const attentionMask = inputs?.attention_mask;
@@ -481,16 +475,15 @@ function processorDiagnostics(
     text_sequence_length: tensorLastDimension(inputIds),
     image_placeholder_count: placeholders,
     attention_mask_length: tensorLastDimension(attentionMask),
-    processor_warnings: warnings,
   };
 }
 
 async function processInputs(
   rawImage: ModelImage,
   config: InferenceConfig
-): Promise<{ inputs: ProcessorInputs; warnings: string[] }> {
+): Promise<ProcessorInputs> {
   const activeProcessor = requiredProcessor();
-  const warnings = effectiveProcessorWarnings(config);
+  assertEffectiveProcessorControls(config);
   const messages = [
     {
       role: "user",
@@ -516,7 +509,7 @@ async function processInputs(
     }
     throw new MultimodalInputBudgetError(inputLength, config.contextTokens, imagePlaceholderCount);
   }
-  return { inputs, warnings };
+  return inputs;
 }
 
 async function generate(
@@ -530,7 +523,7 @@ async function generate(
   inputLength: number;
   outputTokens: number;
 }> {
-  const { inputs, warnings } = await processInputs(rawImage, config);
+  const inputs = await processInputs(rawImage, config);
   const activeModel = requiredModel();
   const activeProcessor = requiredProcessor();
   const inputLength = tensorLastDimension(inputs.input_ids);
@@ -565,13 +558,13 @@ async function generate(
     rawOutput,
     probability: scoreResult.probability,
     logprobs: scoreResult.logprobs,
-    diagnostics: processorDiagnostics(inputs, rawImage, warnings),
+    diagnostics: processorDiagnostics(inputs, rawImage),
     inputLength,
     outputTokens: tokenIds.length,
   };
 }
 
-async function warmupModel(id: number, config: InferenceConfig, warnings: string[]): Promise<void> {
+async function warmupModel(id: number, config: InferenceConfig): Promise<void> {
   progress(id, "warmup", "Running exact-path warm-up inference", 90);
   const width = 32;
   const height = 32;
@@ -606,7 +599,6 @@ async function warmupModel(id: number, config: InferenceConfig, warnings: string
     input_tokens: result.inputLength,
     output_tokens: result.outputTokens,
     processor: result.diagnostics,
-    processor_warnings: warnings,
   });
 }
 
@@ -691,7 +683,6 @@ async function classifyRequest(request: QueuedClassification): Promise<Classific
         completion_tokens: generation.outputTokens,
         total_tokens: generation.inputLength + generation.outputTokens,
       },
-      engineTimings: { webgpuInferenceMs: roundTo(inferenceMs, 3) },
       processor: generation.diagnostics,
     },
     performance: {
@@ -778,7 +769,6 @@ const api: WorkerApi = {
     const descriptor = v.parse(ImageDescriptorSchema, descriptorInput);
     const decoded = await decodeImage(descriptor, bytes, config);
     sources.set(descriptor.id, decoded);
-    return { width: decoded.width, height: decoded.height, bytes: descriptor.bytes };
   },
   async releaseImage(imageId) {
     return sources.delete(imageId);
@@ -799,15 +789,6 @@ const api: WorkerApi = {
       abortQueued(pendingRequest, "Classification cancelled");
       pendingRequest = null;
     }
-  },
-  async status() {
-    return {
-      prepared: Boolean(model && processor),
-      revision: preparedRevision,
-      images: sources.size,
-      activeJobId: currentJobId,
-      pendingJobId: pendingRequest?.jobId ?? null,
-    };
   },
   async setDeviceLostListener(listener) {
     deviceLostListener = listener;

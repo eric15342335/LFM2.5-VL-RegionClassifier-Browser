@@ -1,3 +1,4 @@
+import { isUsableSelection, MINIMUM_SELECTION_SPAN } from "./selection-geometry";
 import type { CropDetails, InferenceConfig, Region } from "./types";
 
 export interface DecodedImage {
@@ -8,9 +9,6 @@ export interface DecodedImage {
 
 export interface PreparedCrop {
   blob: Blob;
-  rgba: Uint8ClampedArray;
-  width: number;
-  height: number;
   details: CropDetails;
 }
 
@@ -38,7 +36,7 @@ export function validateRegion(region: Region): void {
   if (values.some((value) => !Number.isFinite(value) || value < 0 || value > 1)) {
     throw new Error("Coordinates must be finite and between 0 and 1");
   }
-  if (Math.abs(region.x2 - region.x1) < 0.01 || Math.abs(region.y2 - region.y1) < 0.01) {
+  if (!isUsableSelection(region, MINIMUM_SELECTION_SPAN)) {
     throw new Error("Selected region is too small");
   }
 }
@@ -154,24 +152,19 @@ async function resizeAndEncode(
   targetWidth: number,
   targetHeight: number,
   jpegQuality: number
-): Promise<{ rgba: Uint8ClampedArray; blob: Blob }> {
+): Promise<Blob> {
   const sourceCanvas = rgbaToCanvas(rgba, sourceWidth, sourceHeight);
   const targetCanvas = new OffscreenCanvas(targetWidth, targetHeight);
-  const context = targetCanvas.getContext("2d", {
-    alpha: false,
-    willReadFrequently: true,
-  });
+  const context = targetCanvas.getContext("2d", { alpha: false });
   if (!context) throw new Error("2D canvas is unavailable");
 
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "low";
   context.drawImage(sourceCanvas, 0, 0, sourceWidth, sourceHeight, 0, 0, targetWidth, targetHeight);
-  const resized = context.getImageData(0, 0, targetWidth, targetHeight).data;
-  const blob = await targetCanvas.convertToBlob({
+  return targetCanvas.convertToBlob({
     type: "image/jpeg",
     quality: jpegQuality / 100,
   });
-  return { rgba: resized, blob };
 }
 
 function normalizedPixelBox(
@@ -211,7 +204,7 @@ export async function prepareCrop(
   const scale = Math.min(1, config.imageSide / Math.max(beforeWidth, beforeHeight));
   const modelWidth = Math.max(1, roundHalfEven(beforeWidth * scale));
   const modelHeight = Math.max(1, roundHalfEven(beforeHeight * scale));
-  const encoded = await resizeAndEncode(
+  const blob = await resizeAndEncode(
     isolated,
     beforeWidth,
     beforeHeight,
@@ -224,10 +217,7 @@ export async function prepareCrop(
   const sourceArea = Math.max(1, image.width * image.height);
 
   return {
-    blob: encoded.blob,
-    rgba: encoded.rgba,
-    width: modelWidth,
-    height: modelHeight,
+    blob,
     details: {
       selectionBox: orderedBox(region).map((value) => roundTo(value, 6)),
       selectionPixels: [...selectionBox],
@@ -243,7 +233,6 @@ export async function prepareCrop(
       paddingRatio: config.cropPadding,
       resampling: config.resampling,
       prepareMs: roundTo(performance.now() - started, 3),
-      encodedJpegBytes: encoded.blob.size,
     },
   };
 }

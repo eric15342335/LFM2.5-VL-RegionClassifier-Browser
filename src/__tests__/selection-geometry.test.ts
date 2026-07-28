@@ -72,6 +72,7 @@ describe("rectangular selection coordinate conversion", () => {
       y2: 0.1,
     });
     expect(isUsableSelection({ x1: 0, y1: 0, x2: 0.01, y2: 0.01 })).toBe(true);
+    expect(isUsableSelection({ x1: 0.1, y1: 0.1, x2: 0.11, y2: 0.11 })).toBe(true);
     expect(isUsableSelection({ x1: 0, y1: 0, x2: 0.009, y2: 0.02 })).toBe(false);
   });
 

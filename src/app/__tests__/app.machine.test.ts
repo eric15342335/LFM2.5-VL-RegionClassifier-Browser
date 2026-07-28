@@ -56,7 +56,6 @@ const result: ClassificationResult = {
     finishReason: "stop",
     tokenLogprobs: [-0.09],
     usage: {},
-    engineTimings: {},
   },
   performance: {
     preprocessMs: 10,
@@ -77,7 +76,6 @@ const result: ClassificationResult = {
 
 class FakeClient implements InferenceClientPort {
   readonly name = "fake";
-  prepared = false;
   loadedImages: string[] = [];
   lifecycleListeners = new Set<InferenceLifecycleListener>();
   classifyImpl: (request: ClassifyRequest) => Promise<ClassificationResult> = async () => result;
@@ -94,11 +92,6 @@ class FakeClient implements InferenceClientPort {
       progress: 1,
       elapsedMs: 10,
     });
-    this.prepared = true;
-  }
-
-  isPrepared(): boolean {
-    return this.prepared;
   }
 
   async loadImage(_file: File, image: ImageDescriptor): Promise<void> {
@@ -133,7 +126,7 @@ function file(): File {
 
 function decoder(close = vi.fn()): ImageDecoder {
   return async () => ({
-    bitmap: { width: 640, height: 480, close } as unknown as ImageBitmap,
+    previewBitmap: { width: 640, height: 480, close } as unknown as ImageBitmap,
     descriptor,
   });
 }
@@ -236,7 +229,7 @@ describe("appMachine", () => {
     actor.stop();
   });
 
-  it("invalidates model readiness after asynchronous device loss", async () => {
+  it("derives readiness from the model state and restores it from a ready progress event", async () => {
     const { actor, client } = await startOperational();
     actor.send({ type: "LOAD_MODEL" });
     await waitFor(actor, (snapshot) => snapshot.hasTag("modelReady"));
@@ -244,9 +237,22 @@ describe("appMachine", () => {
     client.loseDevice("GPU adapter reset");
     await waitFor(actor, (snapshot) => snapshot.hasTag("modelError"));
 
-    expect(actor.getSnapshot().context.modelPrepared).toBe(false);
+    expect("modelPrepared" in actor.getSnapshot().context).toBe(false);
     expect(actor.getSnapshot().context.technicalError).toContain("GPU adapter reset");
     expect(primaryActionFor(actor.getSnapshot(), "~573 MB").intent).toBe("load-model");
+
+    actor.send({
+      type: "PROGRESS",
+      event: {
+        event: "status",
+        stage: "ready",
+        message: "Model recovered",
+        progress: 100,
+        elapsedMs: 25,
+      },
+    });
+    await waitFor(actor, (snapshot) => snapshot.hasTag("modelReady"));
+    expect(primaryActionFor(actor.getSnapshot(), "~573 MB").intent).toBe("choose-image");
     actor.stop();
   });
 });

@@ -60,7 +60,6 @@ export interface CropDetails {
   paddingRatio: number;
   resampling: string;
   prepareMs: number;
-  encodedJpegBytes?: number;
 }
 
 export interface ClassificationResult {
@@ -77,7 +76,6 @@ export interface ClassificationResult {
     finishReason: string | null;
     tokenLogprobs: number[];
     usage: Record<string, unknown>;
-    engineTimings: Record<string, unknown>;
     processor?: Record<string, unknown>;
   };
   performance: {
@@ -108,7 +106,6 @@ export interface InferenceEngine {
   readonly name: string;
   probe(): Promise<BrowserCapability>;
   prepare(onProgress?: (event: ProgressEvent) => void): Promise<void>;
-  isPrepared(): boolean;
   loadImage(file: File, descriptor: ImageDescriptor, signal?: AbortSignal): Promise<void>;
   releaseImage(imageId: string): Promise<void>;
   classify(request: ClassifyRequest): Promise<ClassificationResult>;

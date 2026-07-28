@@ -80,7 +80,6 @@ const CropDetailsSchema = v.object({
   paddingRatio: finiteNumber,
   resampling: v.string(),
   prepareMs: finiteNumber,
-  encodedJpegBytes: v.optional(finiteNumber),
 });
 
 export const ClassificationResultSchema = v.object({
@@ -97,7 +96,6 @@ export const ClassificationResultSchema = v.object({
     finishReason: v.nullable(v.string()),
     tokenLogprobs: v.array(finiteNumber),
     usage: unknownRecord,
-    engineTimings: unknownRecord,
     processor: v.optional(unknownRecord),
   }),
   performance: v.object({

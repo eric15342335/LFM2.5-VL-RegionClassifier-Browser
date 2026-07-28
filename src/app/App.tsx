@@ -19,14 +19,14 @@ import { notifications } from "@mantine/notifications";
 import { useMachine } from "@xstate/react";
 import { useEffect, useRef, useState } from "react";
 import { INFERENCE_CONFIG } from "../config";
+import { ACCEPTED_IMAGE_MIME_TYPES, SUPPORTED_IMAGE_FORMATS_LABEL } from "../image-format";
 import { BrowserInferenceClient, type InferenceClientPort } from "../inference/client";
-import { appMachine, primaryActionFor } from "./app.machine";
+import { appMachine, primaryActionFor, type ImageDecoder } from "./app.machine";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { formatBytes, formatDuration, formatModelSize } from "./format";
+import { closeImageBitmap } from "./image-preview";
 import { ImageWorkspace } from "./ImageWorkspace";
 import { ResultPanel } from "./ResultPanel";
-
-const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
 function RuntimeBadge({
   supported,
@@ -55,12 +55,15 @@ function RuntimeBadge({
   return <Badge variant="outline">WebGPU ready</Badge>;
 }
 
-export function App({ inferenceClient }: Readonly<{ inferenceClient?: InferenceClientPort }>) {
+export function App({
+  inferenceClient,
+  decodeImage,
+}: Readonly<{ inferenceClient?: InferenceClientPort; decodeImage?: ImageDecoder }>) {
   const [client] = useState(() => inferenceClient ?? new BrowserInferenceClient(INFERENCE_CONFIG));
-  const [snapshot, send] = useMachine(appMachine, { input: { client } });
+  const [snapshot, send] = useMachine(appMachine, { input: { client, decodeImage } });
   const [coordinatesOpen, setCoordinatesOpen] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dropzoneOpenRef = useRef<(() => void) | null>(null);
   const lastErrorRef = useRef<string | null>(null);
   const context = snapshot.context;
   const modelSize = formatModelSize(INFERENCE_CONFIG.model.estimated_download_bytes);
@@ -70,8 +73,14 @@ export function App({ inferenceClient }: Readonly<{ inferenceClient?: InferenceC
     snapshot.hasTag("imageLoading") ||
     snapshot.hasTag("classifying");
   const supported = context.capability?.supported ?? !snapshot.hasTag("unsupported");
+  const unsupported = snapshot.hasTag("unsupported");
 
   useEffect(() => () => void client.dispose(), [client]);
+
+  useEffect(() => {
+    const previewBitmap = context.image?.previewBitmap;
+    return () => closeImageBitmap(previewBitmap);
+  }, [context.image?.previewBitmap]);
 
   useEffect(() => {
     if (context.operationStartedAt === null) {
@@ -86,7 +95,16 @@ export function App({ inferenceClient }: Readonly<{ inferenceClient?: InferenceC
   }, [context.elapsedMs, context.operationStartedAt]);
 
   useEffect(() => {
-    if (!context.technicalError || context.technicalError === lastErrorRef.current) return;
+    if (!context.technicalError) {
+      lastErrorRef.current = null;
+      return;
+    }
+    if (unsupported) {
+      lastErrorRef.current = context.technicalError;
+      return;
+    }
+    if (context.technicalError === lastErrorRef.current) return;
+
     lastErrorRef.current = context.technicalError;
     notifications.show({
       title: "Operation failed",
@@ -94,7 +112,7 @@ export function App({ inferenceClient }: Readonly<{ inferenceClient?: InferenceC
       color: "red",
       autoClose: 7000,
     });
-  }, [context.message, context.technicalError]);
+  }, [context.message, context.technicalError, unsupported]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -108,7 +126,7 @@ export function App({ inferenceClient }: Readonly<{ inferenceClient?: InferenceC
 
   const runPrimaryAction = () => {
     if (action.intent === "load-model") send({ type: "LOAD_MODEL" });
-    if (action.intent === "choose-image") fileInputRef.current?.click();
+    if (action.intent === "choose-image") dropzoneOpenRef.current?.();
     if (action.intent === "focus-selection") setCoordinatesOpen(true);
     if (action.intent === "classify") send({ type: "CLASSIFY" });
   };
@@ -174,6 +192,7 @@ export function App({ inferenceClient }: Readonly<{ inferenceClient?: InferenceC
               <Grid align="center">
                 <Grid.Col span={{ base: 12, md: 7 }}>
                   <Dropzone
+                    openRef={dropzoneOpenRef}
                     onDrop={(files) => files[0] && acceptFile(files[0])}
                     onReject={() =>
                       notifications.show({
@@ -183,7 +202,7 @@ export function App({ inferenceClient }: Readonly<{ inferenceClient?: InferenceC
                         color: "red",
                       })
                     }
-                    accept={ACCEPTED_IMAGE_TYPES}
+                    accept={ACCEPTED_IMAGE_MIME_TYPES}
                     maxSize={INFERENCE_CONFIG.maxImageBytes}
                     multiple={false}
                     disabled={busy}
@@ -199,7 +218,8 @@ export function App({ inferenceClient }: Readonly<{ inferenceClient?: InferenceC
                           size="sm"
                           c="dimmed"
                         >
-                          JPEG, PNG, or WebP · up to {formatBytes(INFERENCE_CONFIG.maxImageBytes)}
+                          {SUPPORTED_IMAGE_FORMATS_LABEL} · up to{" "}
+                          {formatBytes(INFERENCE_CONFIG.maxImageBytes)}
                         </Text>
                       </Box>
                       <Button
@@ -207,24 +227,13 @@ export function App({ inferenceClient }: Readonly<{ inferenceClient?: InferenceC
                         disabled={busy}
                         onClick={(event) => {
                           event.stopPropagation();
-                          fileInputRef.current?.click();
+                          dropzoneOpenRef.current?.();
                         }}
                       >
                         Browse
                       </Button>
                     </Group>
                   </Dropzone>
-                  <input
-                    ref={fileInputRef}
-                    hidden
-                    type="file"
-                    accept={ACCEPTED_IMAGE_TYPES.join(",")}
-                    onChange={(event) => {
-                      const file = event.currentTarget.files?.[0];
-                      if (file) acceptFile(file);
-                      event.currentTarget.value = "";
-                    }}
-                  />
                 </Grid.Col>
                 <Grid.Col span={{ base: 12, md: 5 }}>
                   <Stack gap="xs">
