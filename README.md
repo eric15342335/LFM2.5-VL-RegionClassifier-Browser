@@ -17,7 +17,7 @@ The application uses the ONNX version of [LFM2.5-VL-450M](https://huggingface.co
 
 You will need:
 
-- A browser with WebGPU (`shader-f16` is optional; other devices use the Q4 compatibility profile)
+- A browser with WebGPU and `shader-f16` support
 - Enough browser storage for the model files and runtime cache
 - Node.js 22 or newer
 - Corepack
@@ -56,12 +56,11 @@ corepack pnpm run check
 You can also run the repository checks separately:
 
 ```bash
-node scripts/audit-browser-only.mjs
 node scripts/verify-model-manifest.mjs
 node scripts/measure-codebase.mjs
 ```
 
-The individual checks verify that the application remains browser-only, validate the pinned model files, and measure the codebase.
+The individual checks validate the pinned model files and measure the codebase.
 
 See [`package.json`](./package.json) for the complete list of commands and dependencies.
 

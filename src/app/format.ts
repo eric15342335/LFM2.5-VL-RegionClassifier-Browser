@@ -24,5 +24,5 @@ export function formatPercent(value: number | null | undefined, digits = 1): str
 }
 
 export function formatModelSize(bytes: number): string {
-  return `~${Math.round(bytes / 1_000_000)} MB`;
+  return `${Math.round(bytes / 1_000_000)} MB`;
 }

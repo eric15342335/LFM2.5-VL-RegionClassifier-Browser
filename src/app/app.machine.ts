@@ -370,7 +370,10 @@ export const appMachine = setup({
             target: "operational",
             actions: assign({
               capability: ({ event }) => outputOf<BrowserCapability>(event),
-              message: () => "WebGPU is available. Load the local model to continue.",
+              message: ({ event }) =>
+                outputOf<BrowserCapability>(event).shaderF16
+                  ? "WebGPU is available. Load the local model to continue."
+                  : "WebGPU is available. The vision encoder will use the CPU fallback.",
               technicalError: () => null,
             }),
           },
@@ -538,7 +541,7 @@ export type PrimaryAction = Readonly<{
   intent: "none" | "load-model" | "choose-image" | "focus-selection" | "classify";
 }>;
 
-export function primaryActionFor(snapshot: AppSnapshot, modelSize: string): PrimaryAction {
+export function primaryActionFor(snapshot: AppSnapshot, modelSize?: string): PrimaryAction {
   if (snapshot.hasTag("probing")) {
     return { label: "Checking browser...", enabled: false, intent: "none" };
   }
@@ -555,7 +558,11 @@ export function primaryActionFor(snapshot: AppSnapshot, modelSize: string): Prim
     return { label: "Loading model...", enabled: false, intent: "none" };
   }
   if (!snapshot.hasTag("modelReady")) {
-    return { label: `Load model (${modelSize})`, enabled: true, intent: "load-model" };
+    return {
+      label: modelSize ? `Load model (${modelSize})` : "Load model",
+      enabled: true,
+      intent: "load-model",
+    };
   }
   if (!snapshot.hasTag("imageReady")) {
     return { label: "Choose an image", enabled: true, intent: "choose-image" };

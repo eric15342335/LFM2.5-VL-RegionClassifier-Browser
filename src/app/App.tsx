@@ -67,7 +67,7 @@ export function App({
   const lastErrorRef = useRef<string | null>(null);
   const context = snapshot.context;
   const downloadBytes = context.capability?.storage?.download;
-  const modelSize = downloadBytes === undefined ? "size unknown" : formatModelSize(downloadBytes);
+  const modelSize = downloadBytes === undefined ? undefined : formatModelSize(downloadBytes);
   const action = primaryActionFor(snapshot, modelSize);
   const busy =
     snapshot.hasTag("modelLoading") ||
@@ -156,7 +156,12 @@ export function App({
                 radius="md"
                 variant="gradient"
               >
-                AI
+                <img
+                  src="/logo.svg"
+                  alt=""
+                  width={24}
+                  height={24}
+                />
               </ThemeIcon>
               <Box>
                 <Title
@@ -207,6 +212,7 @@ export function App({
                     maxSize={INFERENCE_CONFIG.maxImageBytes}
                     multiple={false}
                     disabled={busy}
+                    inputProps={{ "aria-label": "Upload image" }}
                     p="md"
                   >
                     <Group
@@ -243,14 +249,16 @@ export function App({
                         size="sm"
                         fw={600}
                       >
-                        Current operation
+                        Status
                       </Text>
-                      <Text
-                        size="sm"
-                        c="dimmed"
-                      >
-                        {formatDuration(elapsed)}
-                      </Text>
+                      {busy && (
+                        <Text
+                          size="sm"
+                          c="dimmed"
+                        >
+                          {formatDuration(elapsed)}
+                        </Text>
+                      )}
                     </Group>
                     <Progress
                       value={context.progress?.progress ?? (busy ? 10 : 0)}

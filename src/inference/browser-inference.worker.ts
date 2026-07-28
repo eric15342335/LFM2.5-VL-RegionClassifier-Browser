@@ -10,6 +10,7 @@ import {
 } from "@huggingface/transformers";
 import { expose } from "comlink";
 import * as v from "valibot";
+import { probeBrowserCapability } from "./capability";
 import { ImageDescriptorSchema, RegionSchema } from "../domain/schemas";
 import { validateImageContainer } from "../image-format";
 import { prepareCrop, roundTo, type DecodedImage } from "../preprocess";
@@ -97,12 +98,8 @@ type SliceableTensor = {
   slice(axis: null, range: [number | null, number | null]): unknown;
 };
 type DtypeProfile = InferenceConfig["model"]["dtype"];
-
-const q4DtypeProfile = {
-  embed_tokens: "q4",
-  vision_encoder: "q4",
-  decoder_model_merged: "q4",
-} as const satisfies DtypeProfile;
+type DeviceProfile = Record<keyof DtypeProfile, "wasm" | "webgpu">;
+type HuggingFaceTreeEntry = { path?: unknown; size?: unknown };
 
 const sources = new Map<string, DecodedImage & { descriptor: ImageDescriptor }>();
 const stoppingCriteria = new InterruptableStoppingCriteria();
@@ -193,137 +190,60 @@ function requiredProcessor(): RuntimeProcessor {
   return processor;
 }
 
-function recordOfNumbers(value: unknown): Record<string, number> | undefined {
-  const record = asRecord(value);
-  if (!record) return undefined;
-  const output: Record<string, number> = {};
-  for (const [key, item] of Object.entries(record)) {
-    if (typeof item === "number") output[key] = item;
-  }
-  return Object.keys(output).length ? output : undefined;
-}
-
 function selectedArtifactPaths(config: InferenceConfig, dtype: DtypeProfile): Set<string> {
-  const dtypeByRole = {
-    embedding: dtype.embed_tokens,
-    vision: dtype.vision_encoder,
-    decoder: dtype.decoder_model_merged,
-  } as const;
   return new Set(
-    config.model.artifacts.flatMap((artifact) => {
-      const selectedDtype = dtypeByRole[artifact.role as keyof typeof dtypeByRole];
-      return !artifact.dtype || artifact.dtype === selectedDtype ? [artifact.path] : [];
-    })
+    config.model.artifacts
+      .filter((artifact) => {
+        if (artifact.role === "license") return false;
+        if (!artifact.dtype) return true;
+        const key =
+          artifact.role === "embedding"
+            ? "embed_tokens"
+            : artifact.role === "vision"
+              ? "vision_encoder"
+              : "decoder_model_merged";
+        return artifact.dtype === dtype[key];
+      })
+      .map((artifact) => artifact.path)
   );
 }
 
-async function modelDownloadBytes(config: InferenceConfig, dtype: DtypeProfile): Promise<number> {
-  const repository = config.model.repository.split("/").map(encodeURIComponent).join("/");
-  const revision = encodeURIComponent(config.model.revision);
+async function modelDownloadBytes(
+  config: InferenceConfig,
+  dtype: DtypeProfile
+): Promise<number | undefined> {
   const response = await fetch(
-    `https://huggingface.co/api/models/${repository}/tree/${revision}?recursive=true&expand=true`
+    `https://huggingface.co/api/models/${config.model.repository}/tree/${config.model.revision}?recursive=true&expand=false`
   );
-  if (!response.ok) throw new Error(`Hugging Face metadata request failed (${response.status})`);
-  const entries = (await response.json()) as {
-    path?: unknown;
-    size?: unknown;
-    lfs?: { size?: unknown };
-  }[];
-  const sizes = new Map(
-    entries.flatMap((entry) => {
-      const size = Number(entry.lfs?.size ?? entry.size);
-      return typeof entry.path === "string" && Number.isFinite(size) ? [[entry.path, size]] : [];
-    })
-  );
+  if (!response.ok) return undefined;
+  const files = await response.json();
+  if (!Array.isArray(files)) return undefined;
+  const paths = selectedArtifactPaths(config, dtype);
   let total = 0;
-  for (const path of selectedArtifactPaths(config, dtype)) {
-    const size = sizes.get(path);
-    if (size === undefined) throw new Error(`Hugging Face metadata omitted ${path}`);
-    total += size;
+  let found = 0;
+  for (const file of files as HuggingFaceTreeEntry[]) {
+    if (
+      !paths.has(String(file.path)) ||
+      typeof file.size !== "number" ||
+      !Number.isFinite(file.size)
+    )
+      continue;
+    total += file.size;
+    found += 1;
   }
-  return total;
+  return found === paths.size ? total : undefined;
 }
 
 async function probe(config: InferenceConfig): Promise<BrowserCapability> {
   if (successfulCapability) return successfulCapability;
-
-  const capability: BrowserCapability = {
-    supported: false,
-    secureContext: self.isSecureContext,
-    hasWebgpu: "gpu" in navigator,
-    adapterAcquired: false,
-    deviceAcquired: false,
-    shaderF16: false,
-  };
-  if (!self.isSecureContext) {
-    capability.reason = "WebGPU requires HTTPS or localhost";
-    return capability;
-  }
-  if (!("gpu" in navigator)) {
-    capability.reason = "WebGPU is not available in this browser";
-    return capability;
-  }
-
-  let estimate: StorageEstimate | undefined;
-  try {
-    estimate = await navigator.storage?.estimate();
-  } catch {
-    estimate = undefined;
-  }
-  const adapter = await navigator.gpu.requestAdapter({
-    powerPreference: "high-performance",
-  });
-  if (!adapter) {
-    capability.reason = "No WebGPU adapter was returned";
-    return capability;
-  }
-  capability.adapterAcquired = true;
-  capability.shaderF16 = adapter.features.has("shader-f16");
-  capability.limits = recordOfNumbers(adapter.limits);
-  const getInfo = (
-    adapter as GPUAdapter & {
-      requestAdapterInfo?: () => Promise<Record<string, unknown>>;
-    }
-  ).requestAdapterInfo;
-  if (getInfo) capability.adapterInfo = await getInfo.call(adapter).catch(() => undefined);
-  const device = await adapter.requestDevice({
-    requiredFeatures: capability.shaderF16 ? ["shader-f16"] : [],
-  });
-  capability.deviceAcquired = true;
-  device.destroy();
+  const capability = await probeBrowserCapability();
+  if (!capability.supported) return capability;
 
   const download = await modelDownloadBytes(config, dtypeFor(capability, config)).catch(
     () => undefined
   );
-  if (download !== undefined)
-    capability.storage = {
-      download,
-      required: Math.ceil(download * 1.15),
-    };
-  if (estimate) {
-    const quota = estimate.quota;
-    const usage = estimate.usage;
-    const available =
-      quota === undefined || usage === undefined ? undefined : Math.max(0, quota - usage);
-    capability.storage = {
-      ...(capability.storage ?? {}),
-      quota,
-      usage,
-      available,
-    } as BrowserCapability["storage"];
-  }
-  const requiredBytes = capability.storage?.required;
-  const availableBytes = capability.storage?.available;
-  if (
-    requiredBytes !== undefined &&
-    availableBytes !== undefined &&
-    availableBytes < requiredBytes
-  ) {
-    capability.reason = "Browser storage headroom is below the browser model requirement";
-    return capability;
-  }
 
-  capability.supported = true;
+  if (download !== undefined) capability.storage = { ...capability.storage, download };
   successfulCapability = capability;
   return capability;
 }
@@ -338,7 +258,15 @@ function configureRuntime(): void {
 }
 
 function dtypeFor(capability: BrowserCapability, config: InferenceConfig): DtypeProfile {
-  return capability.shaderF16 ? config.model.dtype : q4DtypeProfile;
+  return capability.shaderF16
+    ? config.model.dtype
+    : { ...config.model.dtype, vision_encoder: "q4" };
+}
+
+function deviceFor(capability: BrowserCapability): DeviceProfile {
+  return capability.shaderF16
+    ? { embed_tokens: "webgpu", vision_encoder: "webgpu", decoder_model_merged: "webgpu" }
+    : { embed_tokens: "webgpu", vision_encoder: "wasm", decoder_model_merged: "webgpu" };
 }
 
 function modelKey(config: InferenceConfig, dtype: DtypeProfile): string {
@@ -416,15 +344,10 @@ async function prepareModel(id: number, config: InferenceConfig, warmup = true):
     const dtype = dtypeFor(capability, config);
     const key = modelKey(config, dtype);
     if (model && processor && preparedModelKey === key) return;
-    progress(
-      id,
-      "probe",
-      capability.shaderF16
-        ? "WebGPU capability check passed"
-        : "WebGPU capability check passed; using Q4 compatibility profile",
-      4,
-      { ...capability, dtype_profile: dtype } as unknown as Record<string, unknown>
-    );
+    progress(id, "probe", "WebGPU capability check passed", 4, {
+      ...capability,
+      dtype_profile: dtype,
+    } as unknown as Record<string, unknown>);
     const baseOptions = {
       revision: config.model.revision,
     };
@@ -433,7 +356,7 @@ async function prepareModel(id: number, config: InferenceConfig, warmup = true):
       AutoProcessor.from_pretrained(config.model.repository, baseOptions),
       AutoModelForImageTextToText.from_pretrained(config.model.repository, {
         ...baseOptions,
-        device: "webgpu",
+        device: deviceFor(capability),
         dtype,
       }),
     ]);

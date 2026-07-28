@@ -44,6 +44,4 @@ Characterization tests cover normalized rectangle conversion, rectangular maskin
 
 ## Release verification
 
-`node scripts/audit-browser-only.mjs` rejects stale imperative UI/worker protocol paths, server routes, unpinned model URLs, and inconsistent verified manifest metadata.
-
 `node scripts/verify-model-manifest.mjs` verifies the local manifest structure. Every pinned artifact records an exact byte length and SHA-256 value, and the manifest has `integrity_status: "verified"`.

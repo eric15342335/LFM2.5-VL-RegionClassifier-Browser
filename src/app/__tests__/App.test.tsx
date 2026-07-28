@@ -93,6 +93,24 @@ describe("App", () => {
     expect(await screen.findByText("Model ready")).toBeTruthy();
   });
 
+  it("shows a fetched model size and keeps the fallback label human-readable", async () => {
+    const client = new UiClient();
+    client.probe.mockResolvedValueOnce({
+      supported: true,
+      secureContext: true,
+      hasWebgpu: true,
+      adapterAcquired: true,
+      deviceAcquired: true,
+      shaderF16: true,
+      storage: { download: 1_234_000_000 },
+    });
+    renderApp(client);
+
+    expect(await screen.findByRole("button", { name: "Load model (1234 MB)" })).toBeTruthy();
+    expect(screen.queryByText("size unknown", { exact: false })).toBeNull();
+    expect(screen.queryByText("0 ms", { exact: true })).toBeNull();
+  });
+
   it("keeps cancellation unavailable outside classification", async () => {
     renderApp(new UiClient());
     const cancel = await screen.findByRole("button", { name: "Cancel" });
@@ -109,6 +127,7 @@ describe("App", () => {
     const inputs = container.querySelectorAll('input[type="file"]');
     expect(inputs).toHaveLength(1);
     const picker = inputs[0] as HTMLInputElement;
+    expect(picker.getAttribute("aria-label")).toBe("Upload image");
     const pickerClick = vi.spyOn(picker, "click");
 
     await userEvent.click(screen.getByRole("button", { name: "Browse" }));

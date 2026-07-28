@@ -1,6 +1,7 @@
 import { proxy, releaseProxy, transfer, wrap } from "comlink";
 import * as v from "valibot";
 import { BrowserCapabilitySchema, ClassificationResultSchema } from "../domain/schemas";
+import { probeBrowserCapability, withTimeout } from "./capability";
 import type {
   BrowserCapability,
   ClassificationResult,
@@ -136,15 +137,15 @@ export class BrowserInferenceClient implements InferenceClientPort {
   }
 
   async probe(): Promise<BrowserCapability> {
-    const operation = this.invoke(this.ensureConnection().api.probe(this.config));
-    const timeout = setTimeout(() => {
-      this.hardReset(errorWithName("TimeoutError", "Browser capability check timed out"));
-    }, this.config.capabilityProbeTimeoutSeconds * 1000);
-    try {
-      return v.parse(BrowserCapabilitySchema, await operation);
-    } finally {
-      clearTimeout(timeout);
-    }
+    const capability = await withTimeout(
+      probeBrowserCapability(),
+      this.config.capabilityProbeTimeoutSeconds * 1000
+    );
+
+    return v.parse(
+      BrowserCapabilitySchema,
+      capability
+    );
   }
 
   async prepare(onProgress?: (event: ProgressEvent) => void): Promise<void> {

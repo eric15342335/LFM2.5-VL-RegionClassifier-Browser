@@ -158,24 +158,6 @@ const descriptor: ImageDescriptor = {
   height: 4,
 };
 
-function metadataResponse(): Response {
-  return {
-    ok: true,
-    status: 200,
-    json: async () =>
-      INFERENCE_CONFIG.model.artifacts.map(({ path }) => ({
-        path,
-        size: path.length,
-      })),
-  } as Response;
-}
-
-function q4MetadataSize(): number {
-  return INFERENCE_CONFIG.model.artifacts
-    .filter(({ dtype }) => dtype === undefined || dtype === "q4")
-    .reduce((total, { path }) => total + path.length, 0);
-}
-
 describe("browser inference worker JPEG model input", () => {
   let api: WorkerApi;
 
@@ -189,7 +171,7 @@ describe("browser inference worker JPEG model input", () => {
     vi.stubGlobal("crypto", { randomUUID: () => "request-1" });
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => metadataResponse())
+      vi.fn(async () => ({ json: async () => [], ok: true }))
     );
     workerMocks.modelFromPretrained.mockImplementation(async () => workerMocks.model);
     workerMocks.requestDevice.mockResolvedValue({ destroy: vi.fn() });
@@ -218,8 +200,6 @@ describe("browser inference worker JPEG model input", () => {
     workerMocks.modelFromPretrained.mockImplementation(async () => workerMocks.model);
     workerMocks.requestDevice.mockReset();
     workerMocks.requestDevice.mockResolvedValue({ destroy: vi.fn() });
-    vi.mocked(fetch).mockReset();
-    vi.mocked(fetch).mockResolvedValue(metadataResponse());
   });
 
   afterAll(() => {
@@ -268,67 +248,73 @@ describe("browser inference worker JPEG model input", () => {
     });
   });
 
-  it("uses all-Q4 without requesting shader-f16 when the adapter lacks it", async () => {
+  it("offloads the Q4 vision encoder to WASM without shader-f16", async () => {
     workerMocks.adapterFeatures = new Set();
     workerMocks.model = createModel();
     workerMocks.processor = createProcessor();
 
-    const progress = vi.fn();
-    await api.prepare(INFERENCE_CONFIG, false, progress);
+    await expect(api.probe(INFERENCE_CONFIG)).resolves.toMatchObject({
+      supported: true,
+      shaderF16: false,
+    });
+    await api.prepare(INFERENCE_CONFIG, false);
 
-    expect(workerMocks.requestDevice).toHaveBeenCalledWith({ requiredFeatures: [] });
-    expect(workerMocks.requestDevice.mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(fetch).mock.invocationCallOrder[0] as number
-    );
-    expect(fetch).toHaveBeenCalledWith(
-      `https://huggingface.co/api/models/${INFERENCE_CONFIG.model.repository}/tree/${INFERENCE_CONFIG.model.revision}?recursive=true&expand=true`
-    );
+    expect(workerMocks.requestDevice).toHaveBeenCalledWith(undefined);
     expect(workerMocks.modelFromPretrained).toHaveBeenCalledWith(
       INFERENCE_CONFIG.model.repository,
       expect.objectContaining({
-        revision: INFERENCE_CONFIG.model.revision,
-        device: "webgpu",
-        dtype: {
-          embed_tokens: "q4",
-          vision_encoder: "q4",
-          decoder_model_merged: "q4",
+        device: {
+          embed_tokens: "webgpu",
+          vision_encoder: "wasm",
+          decoder_model_merged: "webgpu",
         },
-      })
-    );
-    expect(progress).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: expect.stringContaining("Q4 compatibility profile"),
-        detail: expect.objectContaining({
-          storage: expect.objectContaining({
-            download: q4MetadataSize(),
-          }),
-        }),
+        dtype: { ...INFERENCE_CONFIG.model.dtype, vision_encoder: "q4" },
       })
     );
   });
 
-  it("reports profile download size when browser quota metadata is unavailable", async () => {
-    workerMocks.adapterFeatures = new Set();
+  it("supports WebGPU when browser quota metadata is unavailable", async () => {
     vi.mocked(navigator.storage.estimate).mockRejectedValueOnce(new Error("unavailable"));
+    vi.mocked(fetch).mockResolvedValueOnce({
+      json: async () =>
+        INFERENCE_CONFIG.model.artifacts.map((artifact) => ({ path: artifact.path, size: 1 })),
+      ok: true,
+    } as Response);
 
     await expect(api.probe(INFERENCE_CONFIG)).resolves.toMatchObject({
-      supported: true,
-      storage: {
-        download: q4MetadataSize(),
-      },
+      storage: { download: 11 },
     });
   });
 
-  it("does not reject WebGPU when Hugging Face size metadata is unavailable", async () => {
-    vi.mocked(fetch).mockRejectedValueOnce(new Error("offline"));
+  it("uses only the configured mixed dtype artifacts", async () => {
+    const selected = INFERENCE_CONFIG.model.artifacts.filter(
+      (artifact) =>
+        artifact.role !== "license" &&
+        (!artifact.dtype ||
+          artifact.dtype ===
+            INFERENCE_CONFIG.model.dtype[
+              artifact.role === "embedding"
+                ? "embed_tokens"
+                : artifact.role === "vision"
+                  ? "vision_encoder"
+                  : "decoder_model_merged"
+            ])
+    );
+    vi.mocked(fetch).mockResolvedValueOnce({
+      json: async () => [
+        ...selected.map((artifact, index) => ({ path: artifact.path, size: index + 1 })),
+        { path: "onnx/embed_tokens_q4.onnx", size: 1000 },
+        { path: "LICENSE", size: 1000 },
+      ],
+      ok: true,
+    } as Response);
 
     await expect(api.probe(INFERENCE_CONFIG)).resolves.toMatchObject({
-      supported: true,
-      deviceAcquired: true,
+      storage: { download: (selected.length * (selected.length + 1)) / 2 },
     });
   });
 
-  it("preserves the configured profile and shader-f16 request when supported", async () => {
+  it("preserves the configured profile and WebGPU placement when shader-f16 is supported", async () => {
     workerMocks.model = createModel();
     workerMocks.processor = createProcessor();
 
@@ -339,7 +325,14 @@ describe("browser inference worker JPEG model input", () => {
     });
     expect(workerMocks.modelFromPretrained).toHaveBeenCalledWith(
       INFERENCE_CONFIG.model.repository,
-      expect.objectContaining({ dtype: INFERENCE_CONFIG.model.dtype })
+      expect.objectContaining({
+        device: {
+          embed_tokens: "webgpu",
+          vision_encoder: "webgpu",
+          decoder_model_merged: "webgpu",
+        },
+        dtype: INFERENCE_CONFIG.model.dtype,
+      })
     );
   });
 
@@ -365,20 +358,17 @@ describe("browser inference worker JPEG model input", () => {
     expect(workerMocks.modelFromPretrained).toHaveBeenCalledTimes(2);
   });
 
-  it("does not mark a failed Q4 warm-up as ready", async () => {
-    workerMocks.adapterFeatures = new Set();
+  it("does not mark a failed warm-up as ready", async () => {
     workerMocks.model = {
       ...createModel(),
       generate: vi.fn(async () => {
-        throw new Error("Q4 warm-up failed");
+        throw new Error("Warm-up failed");
       }),
     };
     workerMocks.processor = createProcessor();
     const progress = vi.fn();
 
-    await expect(api.prepare(INFERENCE_CONFIG, true, progress)).rejects.toThrow(
-      "Q4 warm-up failed"
-    );
+    await expect(api.prepare(INFERENCE_CONFIG, true, progress)).rejects.toThrow("Warm-up failed");
     expect(progress.mock.calls.some(([event]) => event.stage === "ready")).toBe(false);
 
     workerMocks.model = createModel();
@@ -388,7 +378,6 @@ describe("browser inference worker JPEG model input", () => {
   });
 
   it("requires the warm-up decoder to generate a token", async () => {
-    workerMocks.adapterFeatures = new Set();
     workerMocks.model = {
       ...createModel(),
       generate: vi.fn(async () => ({

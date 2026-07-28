@@ -77,10 +77,11 @@ class FakeClient implements InferenceClientPort {
   readonly name = "fake";
   loadedImages: string[] = [];
   lifecycleListeners = new Set<InferenceLifecycleListener>();
+  capabilityResult = capability;
   classifyImpl: (request: ClassifyRequest) => Promise<ClassificationResult> = async () => result;
 
   async probe(): Promise<BrowserCapability> {
-    return capability;
+    return this.capabilityResult;
   }
 
   async prepare(onProgress?: (event: ProgressEvent) => void): Promise<void> {
@@ -137,6 +138,17 @@ async function startOperational(client = new FakeClient()) {
 }
 
 describe("appMachine", () => {
+  it("explains the WASM vision fallback when shader-f16 is unavailable", async () => {
+    const client = new FakeClient();
+    client.capabilityResult = { ...capability, shaderF16: false };
+    const { actor } = await startOperational(client);
+
+    expect(actor.getSnapshot().context.message).toBe(
+      "WebGPU is available. The vision encoder will use the CPU fallback."
+    );
+    actor.stop();
+  });
+
   it("coordinates model, image, selection, and classification workflows", async () => {
     const { actor, client } = await startOperational();
 
