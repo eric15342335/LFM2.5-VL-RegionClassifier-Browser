@@ -1,6 +1,5 @@
 import {
   Accordion,
-  Badge,
   Button,
   Code,
   CopyButton,
@@ -63,15 +62,12 @@ export function DiagnosticsPanel({
       p="md"
     >
       <Stack gap="md">
-        <Group justify="space-between">
-          <Title
-            order={2}
-            size="h3"
-          >
-            Diagnostics
-          </Title>
-          <Badge variant="outline">Browser session</Badge>
-        </Group>
+        <Title
+          order={2}
+          size="h3"
+        >
+          Diagnostics
+        </Title>
         <Accordion
           variant="separated"
           multiple

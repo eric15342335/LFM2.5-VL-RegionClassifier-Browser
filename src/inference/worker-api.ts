@@ -17,14 +17,6 @@ export type WorkerClassifyRequest = Readonly<{
   jobId: number;
 }>;
 
-export type WorkerStatus = Readonly<{
-  prepared: boolean;
-  revision: string | null;
-  images: number;
-  activeJobId: number | null;
-  pendingJobId: number | null;
-}>;
-
 export interface WorkerApi {
   probe(config: InferenceConfig): Promise<BrowserCapability>;
   prepare(config: InferenceConfig, warmup: boolean, onProgress?: ProgressListener): Promise<void>;
@@ -32,14 +24,13 @@ export interface WorkerApi {
     descriptor: ImageDescriptor,
     bytes: ArrayBuffer,
     config: InferenceConfig
-  ): Promise<{ width: number; height: number; bytes: number }>;
+  ): Promise<void>;
   releaseImage(imageId: string): Promise<boolean>;
   classify(
     request: WorkerClassifyRequest,
     onProgress?: ProgressListener
   ): Promise<ClassificationResult>;
   cancel(jobId?: number): Promise<void>;
-  status(): Promise<WorkerStatus>;
   setDeviceLostListener(listener?: DeviceLostListener): Promise<void>;
   dispose(): Promise<void>;
 }

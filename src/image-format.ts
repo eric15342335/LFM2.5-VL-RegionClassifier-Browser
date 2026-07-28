@@ -1,5 +1,9 @@
 const ASCII = new TextDecoder("ascii");
 
+export const SUPPORTED_IMAGE_FORMATS = ["jpeg", "png", "webp"] as const;
+export const ACCEPTED_IMAGE_MIME_TYPES = SUPPORTED_IMAGE_FORMATS.map((format) => `image/${format}`);
+export const SUPPORTED_IMAGE_FORMATS_LABEL = "JPEG, PNG, or WebP";
+
 type ImageFormat = "jpeg" | "png" | "webp" | "gif";
 
 type ImageFormatInspector = {
@@ -119,8 +123,8 @@ export function imageFrameCount(bytes: Uint8Array): number {
 
 export function validateImageContainer(bytes: Uint8Array): void {
   const format = detectImageFormat(bytes);
-  if (!(["jpeg", "png", "webp"] as const).includes(format as "jpeg" | "png" | "webp")) {
-    throw new Error("Invalid or unsupported image; use JPEG, PNG, or WebP");
+  if (!SUPPORTED_IMAGE_FORMATS.includes(format as (typeof SUPPORTED_IMAGE_FORMATS)[number])) {
+    throw new Error(`Invalid or unsupported image; use ${SUPPORTED_IMAGE_FORMATS_LABEL}`);
   }
   if (imageFrameCount(bytes) > 1) throw new Error("Animated images are not supported");
 }

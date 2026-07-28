@@ -1,4 +1,13 @@
-import { assign, fromCallback, fromPromise, raise, setup, type SnapshotFrom } from "xstate";
+import {
+  and,
+  assign,
+  fromCallback,
+  fromPromise,
+  raise,
+  setup,
+  stateIn,
+  type SnapshotFrom,
+} from "xstate";
 import { INFERENCE_CONFIG } from "../config";
 import type { InferenceClientPort } from "../inference/client";
 import type {
@@ -8,11 +17,11 @@ import type {
   NormalizedSelection,
   ProgressEvent,
 } from "../types";
+import { closeImageBitmap, createPreviewBitmap } from "./image-preview";
 
 export type LoadedImage = Readonly<{
-  file: File;
   descriptor: ImageDescriptor;
-  bitmap: ImageBitmap;
+  previewBitmap: ImageBitmap;
 }>;
 
 export type LatestResult = ClassificationResult & {
@@ -22,7 +31,7 @@ export type LatestResult = ClassificationResult & {
 export type ImageDecoder = (
   file: File,
   signal: AbortSignal
-) => Promise<{ bitmap: ImageBitmap; descriptor: ImageDescriptor }>;
+) => Promise<{ previewBitmap: ImageBitmap; descriptor: ImageDescriptor }>;
 
 export type AppInput = Readonly<{
   client: InferenceClientPort;
@@ -43,7 +52,6 @@ type AppContext = {
   events: ProgressEvent[];
   message: string;
   technicalError: string | null;
-  modelPrepared: boolean;
   operationStartedAt: number | null;
   elapsedMs: number;
 };
@@ -67,7 +75,6 @@ type LoadImageInput = Readonly<{
   decodeImage: ImageDecoder;
   file: File;
   previous: LoadedImage | null;
-  parent: ParentPort;
 }>;
 type ClassifyInput = Readonly<{
   client: InferenceClientPort;
@@ -86,30 +93,39 @@ function errorDetails(error: unknown): string {
 async function defaultDecodeImage(
   file: File,
   signal: AbortSignal
-): Promise<{ bitmap: ImageBitmap; descriptor: ImageDescriptor }> {
+): Promise<{ previewBitmap: ImageBitmap; descriptor: ImageDescriptor }> {
   if (file.size > INFERENCE_CONFIG.maxImageBytes) {
     throw new Error(`Image exceeds ${INFERENCE_CONFIG.maxImageBytes} bytes`);
   }
-  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
-  if (signal.aborted) {
-    bitmap.close();
-    throw signal.reason ?? new DOMException("Image loading cancelled", "AbortError");
+  const decodedBitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  let decodedBitmapOwned = true;
+  try {
+    if (signal.aborted) {
+      throw signal.reason ?? new DOMException("Image loading cancelled", "AbortError");
+    }
+    const { width, height } = decodedBitmap;
+    if (width * height > INFERENCE_CONFIG.maxImagePixels) {
+      throw new Error("Image has too many decoded pixels");
+    }
+
+    const previewPromise = createPreviewBitmap(decodedBitmap, signal);
+    decodedBitmapOwned = false;
+    const previewBitmap = await previewPromise;
+    return {
+      previewBitmap,
+      descriptor: {
+        id: crypto.randomUUID(),
+        name: file.name,
+        mimeType: file.type || "application/octet-stream",
+        bytes: file.size,
+        width,
+        height,
+      },
+    };
+  } catch (error) {
+    if (decodedBitmapOwned) closeImageBitmap(decodedBitmap);
+    throw error;
   }
-  if (bitmap.width * bitmap.height > INFERENCE_CONFIG.maxImagePixels) {
-    bitmap.close();
-    throw new Error("Image has too many decoded pixels");
-  }
-  return {
-    bitmap,
-    descriptor: {
-      id: crypto.randomUUID(),
-      name: file.name,
-      mimeType: file.type || "application/octet-stream",
-      bytes: file.size,
-      width: bitmap.width,
-      height: bitmap.height,
-    },
-  };
 }
 
 const probeActor = fromPromise<BrowserCapability, InferenceClientPort>(({ input }) =>
@@ -125,17 +141,45 @@ const prepareActor = fromPromise<number, PrepareInput>(async ({ input }) => {
 const loadImageActor = fromPromise<LoadedImage & { elapsedMs: number }, LoadImageInput>(
   async ({ input, signal }) => {
     const started = performance.now();
-    if (input.previous) {
-      await input.client.releaseImage(input.previous.descriptor.id);
-      input.previous.bitmap.close();
-    }
-    const { bitmap, descriptor } = await input.decodeImage(input.file, signal);
+    let previewBitmap: ImageBitmap | null = null;
+    const closeUntransferredPreview = () => {
+      closeImageBitmap(previewBitmap);
+      previewBitmap = null;
+    };
+    signal.addEventListener("abort", closeUntransferredPreview, { once: true });
+
     try {
+      const decoded = await input.decodeImage(input.file, signal);
+      previewBitmap = decoded.previewBitmap;
+      const { descriptor } = decoded;
+      if (signal.aborted) {
+        throw signal.reason ?? new DOMException("Image loading cancelled", "AbortError");
+      }
       await input.client.loadImage(input.file, descriptor, signal);
-      return { file: input.file, descriptor, bitmap, elapsedMs: performance.now() - started };
+      if (signal.aborted) {
+        await input.client.releaseImage(descriptor.id);
+        throw signal.reason ?? new DOMException("Image loading cancelled", "AbortError");
+      }
+      if (input.previous) await input.client.releaseImage(input.previous.descriptor.id);
+      if (signal.aborted) {
+        await input.client.releaseImage(descriptor.id);
+        throw signal.reason ?? new DOMException("Image loading cancelled", "AbortError");
+      }
+
+      if (!previewBitmap)
+        throw new Error("Image preview was released before it could be displayed");
+      const loadedImage = {
+        descriptor,
+        previewBitmap,
+        elapsedMs: performance.now() - started,
+      };
+      previewBitmap = null;
+      return loadedImage;
     } catch (error) {
-      bitmap.close();
+      closeUntransferredPreview();
       throw error;
+    } finally {
+      signal.removeEventListener("abort", closeUntransferredPreview);
     }
   }
 );
@@ -177,12 +221,15 @@ export const appMachine = setup({
     lifecycle: lifecycleActor,
   },
   guards: {
-    canClassify: ({ context }) =>
-      context.modelPrepared && Boolean(context.image && context.selection),
-    canAutoClassify: ({ context, event }) =>
-      event.type === "SELECTION_COMPLETED" &&
-      context.modelPrepared &&
-      Boolean(context.image && event.selection),
+    canClassify: and([
+      stateIn({ operational: { model: "ready" } }),
+      ({ context }) => Boolean(context.image && context.selection),
+    ]),
+    canAutoClassify: and([
+      stateIn({ operational: { model: "ready" } }),
+      ({ context, event }) =>
+        event.type === "SELECTION_COMPLETED" && Boolean(context.image && event.selection),
+    ]),
     isAbortError: ({ event }) => {
       const error = errorOf(event);
       return error instanceof Error && error.name === "AbortError";
@@ -226,13 +273,11 @@ export const appMachine = setup({
     }),
     clearResult: assign({ result: () => null }),
     markWorkerReset: assign({
-      modelPrepared: () => false,
       technicalError: ({ event }) =>
         event.type === "WORKER_RESET" ? errorDetails(event.error) : null,
       message: () => "The WebGPU session was lost. Reload the local model to continue.",
     }),
     markModelReady: assign({
-      modelPrepared: () => true,
       technicalError: () => null,
       message: ({ context }) =>
         context.image
@@ -242,7 +287,6 @@ export const appMachine = setup({
           : "Local model ready. Choose an image to begin.",
     }),
     modelFailed: assign({
-      modelPrepared: () => false,
       operationStartedAt: () => null,
       technicalError: ({ event }) => errorDetails(errorOf(event)),
       message: () => "The local model could not be prepared.",
@@ -311,7 +355,6 @@ export const appMachine = setup({
     events: [],
     message: "Checking browser support...",
     technicalError: null,
-    modelPrepared: false,
     operationStartedAt: null,
     elapsedMs: 0,
   }),
@@ -418,12 +461,11 @@ export const appMachine = setup({
               entry: "startOperation",
               invoke: {
                 src: "loadImage",
-                input: ({ context, self }) => ({
+                input: ({ context }) => ({
                   client: context.client,
                   decodeImage: context.decodeImage,
                   file: context.pendingFile as File,
                   previous: context.image,
-                  parent: self,
                 }),
                 onDone: {
                   target: "ready",

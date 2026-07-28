@@ -8,6 +8,7 @@
     "dev": "vite",
     "start": "vite preview",
     "build": "vite build",
+    "diff": "git diff --staged --function-context > commit.txt",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "format": "prettier --write . --ignore-unknown",

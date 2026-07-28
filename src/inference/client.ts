@@ -166,10 +166,6 @@ export class BrowserInferenceClient implements InferenceClientPort {
     }
   }
 
-  isPrepared(): boolean {
-    return this.prepared;
-  }
-
   async loadImage(file: File, descriptor: ImageDescriptor, signal?: AbortSignal): Promise<void> {
     const bytes = await file.arrayBuffer();
     if (signal?.aborted) {

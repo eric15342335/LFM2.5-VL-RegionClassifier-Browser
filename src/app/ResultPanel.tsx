@@ -1,18 +1,8 @@
-import {
-  Badge,
-  Box,
-  Group,
-  Paper,
-  SimpleGrid,
-  Stack,
-  Table,
-  Text,
-  ThemeIcon,
-  Title,
-} from "@mantine/core";
+import { Box, Paper, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from "@mantine/core";
 import { useEffect, useRef } from "react";
 import type { LatestResult, LoadedImage } from "./app.machine";
 import { formatBytes, formatDuration, formatPercent } from "./format";
+import { sourceCropToPreviewPixels } from "./image-preview";
 
 type Props = Readonly<{ result: LatestResult | null; image: LoadedImage | null }>;
 
@@ -42,15 +32,30 @@ export function ResultPanel({ result, image }: Props) {
   useEffect(() => {
     const canvas = previewRef.current;
     if (!canvas || !result || !image) return;
-    const [left = 0, top = 0, right = image.bitmap.width, bottom = image.bitmap.height] =
-      result.crop.cropPixels;
+    const [left, top, right, bottom] = sourceCropToPreviewPixels(
+      result.crop.cropPixels,
+      image.descriptor.width,
+      image.descriptor.height,
+      image.previewBitmap.width,
+      image.previewBitmap.height
+    );
     const width = Math.max(1, right - left);
     const height = Math.max(1, bottom - top);
     const scale = Math.min(1, 640 / width, 360 / height);
     canvas.width = Math.max(1, Math.round(width * scale));
     canvas.height = Math.max(1, Math.round(height * scale));
     const context = canvas.getContext("2d");
-    context?.drawImage(image.bitmap, left, top, width, height, 0, 0, canvas.width, canvas.height);
+    context?.drawImage(
+      image.previewBitmap,
+      left,
+      top,
+      width,
+      height,
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    );
   }, [image, result]);
 
   return (
@@ -61,15 +66,12 @@ export function ResultPanel({ result, image }: Props) {
       h="100%"
     >
       <Stack gap="md">
-        <Group justify="space-between">
-          <Title
-            order={2}
-            size="h3"
-          >
-            Result
-          </Title>
-          <Badge variant="light">Local WebGPU</Badge>
-        </Group>
+        <Title
+          order={2}
+          size="h3"
+        >
+          Result
+        </Title>
         {!result ? (
           <Stack
             align="center"
@@ -105,12 +107,6 @@ export function ResultPanel({ result, image }: Props) {
                 Detected subject
               </Text>
               <Title order={3}>{result.label}</Title>
-              <Text
-                size="sm"
-                c="dimmed"
-              >
-                Raw generation: {result.generation.rawOutput || "—"}
-              </Text>
             </Box>
             <canvas
               ref={previewRef}
