@@ -131,35 +131,33 @@ export function ResultPanel({ result, image }: Props) {
                 value={formatBytes(result.performance.encodedJpegBytes)}
               />
             </SimpleGrid>
-            <Table.ScrollContainer minWidth={420}>
-              <Table
-                striped
-                withTableBorder
-              >
-                <Table.Tbody>
-                  <Table.Tr>
-                    <Table.Th>Source size</Table.Th>
-                    <Table.Td>{result.crop.sourceSize.join(" × ")}</Table.Td>
-                  </Table.Tr>
-                  <Table.Tr>
-                    <Table.Th>Crop pixels</Table.Th>
-                    <Table.Td>{result.crop.cropPixels.join(", ")}</Table.Td>
-                  </Table.Tr>
-                  <Table.Tr>
-                    <Table.Th>Model image</Table.Th>
-                    <Table.Td>{result.crop.modelImageSize.join(" × ")}</Table.Td>
-                  </Table.Tr>
-                  <Table.Tr>
-                    <Table.Th>Selected source area</Table.Th>
-                    <Table.Td>{formatPercent(result.crop.selectedFractionOfSource)}</Table.Td>
-                  </Table.Tr>
-                  <Table.Tr>
-                    <Table.Th>Finish reason</Table.Th>
-                    <Table.Td>{result.generation.finishReason ?? "—"}</Table.Td>
-                  </Table.Tr>
-                </Table.Tbody>
-              </Table>
-            </Table.ScrollContainer>
+            <Table
+              striped
+              withTableBorder
+            >
+              <Table.Tbody>
+                <Table.Tr>
+                  <Table.Th>Source size</Table.Th>
+                  <Table.Td>{result.crop.sourceSize.join(" x ")}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Th>Crop pixels</Table.Th>
+                  <Table.Td>{result.crop.cropPixels.join(", ")}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Th>Model image</Table.Th>
+                  <Table.Td>{result.crop.modelImageSize.join(" x ")}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Th>Selected source area</Table.Th>
+                  <Table.Td>{formatPercent(result.crop.selectedFractionOfSource)}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Th>Finish reason</Table.Th>
+                  <Table.Td>{result.generation.finishReason ?? "—"}</Table.Td>
+                </Table.Tr>
+              </Table.Tbody>
+            </Table>
           </Stack>
         )}
       </Stack>
