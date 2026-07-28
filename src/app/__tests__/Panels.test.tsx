@@ -66,7 +66,7 @@ const result: ClassificationResult & { browser: { roundTripMs: number } } = {
   },
   performance: {
     preprocessMs: 10,
-    webgpuInferenceMs: 30,
+    inferenceMs: 30,
     totalMs: 40,
     sourceBytes: 128,
     encodedJpegBytes: 96,
@@ -83,7 +83,7 @@ const result: ClassificationResult & { browser: { roundTripMs: number } } = {
 };
 
 describe("result and diagnostics presentation", () => {
-  it("keeps the detected subject prominent without duplicating raw output or runtime status", () => {
+  it("keeps the detected subject prominent without duplicating raw output or runtime status", async () => {
     render(
       <MantineProvider>
         <ResultPanel
@@ -93,9 +93,11 @@ describe("result and diagnostics presentation", () => {
       </MantineProvider>
     );
 
-    expect(screen.getByRole("heading", { name: "traffic light" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "traffic light" })).toBeTruthy();
     expect(screen.queryByText(/Raw generation:/i)).toBeNull();
     expect(screen.queryByText("Local WebGPU")).toBeNull();
+    expect(screen.getByText("Inference")).toBeTruthy();
+    expect(screen.queryByText("WebGPU inference")).toBeNull();
   });
 
   it("keeps raw result and technical diagnostics available without a decorative session badge", () => {

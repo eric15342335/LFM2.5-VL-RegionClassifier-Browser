@@ -79,6 +79,7 @@ describe("rectangular selection coordinate conversion", () => {
   it("is stable across repeated normalized-percent round trips", () => {
     const initial = { x1: 0.123456789, y1: 0.234567891, x2: 0.876543219, y2: 0.765432198 };
     let current = initial;
+
     for (let count = 0; count < 100; count += 1)
       current = percentCropToNormalized(normalizedToPercentCrop(current));
     expect(current).toEqual(initial);

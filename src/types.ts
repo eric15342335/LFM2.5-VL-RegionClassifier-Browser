@@ -80,7 +80,7 @@ export interface ClassificationResult {
   };
   performance: {
     preprocessMs: number;
-    webgpuInferenceMs: number;
+    inferenceMs: number;
     totalMs: number;
     sourceBytes: number;
     encodedJpegBytes: number;
@@ -124,7 +124,8 @@ export interface BrowserCapability {
     quota?: number;
     usage?: number;
     available?: number;
-    required: number;
+    download?: number;
+    required?: number;
   };
   adapterInfo?: Record<string, unknown>;
   limits?: Record<string, number>;

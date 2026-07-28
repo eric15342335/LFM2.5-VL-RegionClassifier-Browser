@@ -2,7 +2,7 @@
 
 Classify objects or areas within an image by drawing a crop around them.
 
-Everything runs in the browser with WebGPU: image decoding, cropping, model inference, and result generation. Your images and selected regions are not uploaded to an inference server.
+Everything runs locally in the browser: image decoding, cropping, model inference, and result generation. Your images and selected regions are not uploaded to an inference server.
 
 ## How it works
 
@@ -17,14 +17,14 @@ The application uses the ONNX version of [LFM2.5-VL-450M](https://huggingface.co
 
 You will need:
 
-- A browser with WebGPU and `shader-f16` support
+- A browser with WebGPU support (`shader-f16` is optional)
 - Enough browser storage for the model files and runtime cache
 - Node.js 22 or newer
 - Corepack
 
 Corepack is included with Node.js 22–24. On newer Node.js releases, you may need to install it separately.
 
-Because inference runs locally, performance depends on your browser, GPU, available memory, and the size of the selected region.
+Browsers with `shader-f16` use the configured mixed-precision WebGPU profile. Other WebGPU adapters use an all-Q8 CPU/WASM profile, which downloads about 630.7 MB of Q8 ONNX artifacts plus configuration and tokenizer files. Performance depends on the selected backend, browser, GPU/CPU, available memory, and selected region.
 
 ## Run locally
 
@@ -56,12 +56,11 @@ corepack pnpm run check
 You can also run the repository checks separately:
 
 ```bash
-node scripts/audit-browser-only.mjs
 node scripts/verify-model-manifest.mjs
 node scripts/measure-codebase.mjs
 ```
 
-The individual checks verify that the application remains browser-only, validate the pinned model files, and measure the codebase.
+The individual checks validate the pinned model files and measure the codebase.
 
 See [`package.json`](./package.json) for the complete list of commands and dependencies.
 
@@ -100,7 +99,7 @@ The inference path uses:
 
 - [Transformers.js](https://huggingface.co/docs/transformers.js/index) for model loading and preprocessing
 - [ONNX Runtime Web](https://onnxruntime.ai/docs/get-started/with-javascript/web.html) for browser inference
-- WebGPU for GPU execution
+- WebGPU when `shader-f16` is available, otherwise ONNX Runtime Web WASM with Q8 artifacts
 
 The interface is built with React and Mantine. XState manages application state, Comlink handles worker communication, Valibot validates data, and `react-image-crop` provides region selection.
 

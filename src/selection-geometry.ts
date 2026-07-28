@@ -9,6 +9,7 @@ export function clamp(value: number, minimum: number, maximum: number): number {
 
 function finite(value: number, name: string): number {
   if (!Number.isFinite(value)) throw new RangeError(`${name} must be finite`);
+
   return value;
 }
 
@@ -21,6 +22,7 @@ export function canonicalSelection(selection: NormalizedSelection): NormalizedSe
   const y1 = clamp(finite(selection.y1, "y1"), 0, 1);
   const x2 = clamp(finite(selection.x2, "x2"), 0, 1);
   const y2 = clamp(finite(selection.y2, "y2"), 0, 1);
+
   return {
     x1: stable(Math.min(x1, x2)),
     y1: stable(Math.min(y1, y2)),
@@ -34,6 +36,7 @@ export function percentCropToNormalized(crop: PercentCrop): NormalizedSelection 
   const y = finite(crop.y, "crop.y");
   const width = finite(crop.width, "crop.width");
   const height = finite(crop.height, "crop.height");
+
   return canonicalSelection({
     x1: x / 100,
     y1: y / 100,
@@ -44,6 +47,7 @@ export function percentCropToNormalized(crop: PercentCrop): NormalizedSelection 
 
 export function normalizedToPercentCrop(selection: NormalizedSelection): PercentCrop {
   const normalized = canonicalSelection(selection);
+
   return {
     unit: "%",
     x: stable(normalized.x1 * 100),
@@ -58,6 +62,7 @@ export function isUsableSelection(
   minimumSpan = MINIMUM_SELECTION_SPAN
 ): boolean {
   const normalized = canonicalSelection(selection);
+
   return (
     stable(normalized.x2 - normalized.x1) >= minimumSpan &&
     stable(normalized.y2 - normalized.y1) >= minimumSpan

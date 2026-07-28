@@ -5,6 +5,7 @@ export default defineConfig({
   base: "./",
   plugins: [react()],
   build: {
+    cssCodeSplit: true,
     outDir: "dist",
     emptyOutDir: true,
     sourcemap: true,

@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { MantineProvider } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -82,24 +81,46 @@ function renderApp(client: UiClient) {
 describe("App", () => {
   it("exposes accessible model and image controls after capability probing", async () => {
     const client = new UiClient();
+
     renderApp(client);
 
     const loadButton = await screen.findByRole("button", { name: /load model/i });
+
     expect(screen.getByRole("button", { name: /browse/i }).hasAttribute("disabled")).toBe(false);
-    expect(screen.getAllByText(/webgpu is available/i)).not.toHaveLength(0);
+    expect(screen.getAllByText(/webgpu.*is available/i)).not.toHaveLength(0);
 
     await userEvent.click(loadButton);
     await waitFor(() => expect(client.prepare).toHaveBeenCalledTimes(1));
     expect(await screen.findByText("Model ready")).toBeTruthy();
   });
 
+  it("shows a fetched model size and keeps the fallback label human-readable", async () => {
+    const client = new UiClient();
+
+    client.probe.mockResolvedValueOnce({
+      supported: true,
+      secureContext: true,
+      hasWebgpu: true,
+      adapterAcquired: true,
+      deviceAcquired: true,
+      shaderF16: true,
+      storage: { download: 1_234_000_000 },
+    });
+    renderApp(client);
+
+    expect(await screen.findByRole("button", { name: "Load model (1234 MB)" })).toBeTruthy();
+    expect(screen.queryByText("size unknown", { exact: false })).toBeNull();
+    expect(screen.queryByText("0 ms", { exact: true })).toBeNull();
+  });
+
   it("keeps cancellation unavailable outside classification", async () => {
     renderApp(new UiClient());
     const cancel = await screen.findByRole("button", { name: "Cancel" });
+
     expect(cancel.hasAttribute("disabled")).toBe(true);
   });
 
-  it("uses one Dropzone picker for Browse and the primary choose-image action", async () => {
+  it("uses one native picker for Browse and the primary choose-image action", async () => {
     const client = new UiClient();
     const { container } = renderApp(client);
 
@@ -107,8 +128,11 @@ describe("App", () => {
     await screen.findByText("Model ready");
 
     const inputs = container.querySelectorAll('input[type="file"]');
+
     expect(inputs).toHaveLength(1);
     const picker = inputs[0] as HTMLInputElement;
+
+    expect(picker.getAttribute("aria-label")).toBe("Upload image");
     const pickerClick = vi.spyOn(picker, "click");
 
     await userEvent.click(screen.getByRole("button", { name: "Browse" }));
@@ -118,7 +142,7 @@ describe("App", () => {
     expect(pickerClick).toHaveBeenCalledTimes(2);
   });
 
-  it("continues loading the same selected file through the Dropzone picker", async () => {
+  it("loads the file selected through the native picker", async () => {
     const client = new UiClient();
     const { container } = renderApp(client);
     const file = new File([new Uint8Array(128)], "sample.png", { type: "image/png" });
@@ -127,15 +151,17 @@ describe("App", () => {
     await screen.findByText("Model ready");
 
     const picker = container.querySelector('input[type="file"]') as HTMLInputElement;
+
     fireEvent.change(picker, { target: { files: [file] } });
     await waitFor(() => expect(client.loadImage).toHaveBeenCalledTimes(1));
     fireEvent.change(picker, { target: { files: [file] } });
     await waitFor(() => expect(client.loadImage).toHaveBeenCalledTimes(2));
   });
 
-  it("keeps the Dropzone picker disabled while the application is busy", async () => {
+  it("keeps the native picker disabled while the application is busy", async () => {
     const client = new UiClient();
     let finishPreparing: (() => void) | undefined;
+
     client.prepare.mockImplementation(
       () =>
         new Promise<void>((resolve) => {
@@ -146,9 +172,11 @@ describe("App", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: /load model/i }));
     const browse = screen.getByRole("button", { name: "Browse" });
+
     await waitFor(() => expect(browse.hasAttribute("disabled")).toBe(true));
 
     const picker = container.querySelector('input[type="file"]') as HTMLInputElement;
+
     expect(container.querySelector('[data-disabled="true"]')).not.toBeNull();
     fireEvent.change(picker, {
       target: { files: [new File(["image"], "sample.png", { type: "image/png" })] },
@@ -159,31 +187,26 @@ describe("App", () => {
     await screen.findByText("Model ready");
   });
 
-  it("retains the existing rejection notification copy", async () => {
+  it("shows the image rejection notification", async () => {
     const client = new UiClient();
-    const show = vi.spyOn(notifications, "show");
     const { container } = renderApp(client);
 
     await screen.findByRole("button", { name: /load model/i });
     const picker = container.querySelector('input[type="file"]') as HTMLInputElement;
+
     fireEvent.change(picker, {
       target: { files: [new File(["gif"], "sample.gif", { type: "image/gif" })] },
     });
 
-    await waitFor(() =>
-      expect(show).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: "Image rejected",
-          message: "Use a static JPEG, PNG, or WebP within the configured size limit.",
-          color: "red",
-        })
-      )
+    expect((await screen.findByRole("alert")).textContent).toContain("Image rejected");
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Use a static JPEG, PNG, or WebP within the configured size limit."
     );
-    show.mockRestore();
   });
 
   it("shows the persistent unsupported-browser alert without a duplicate failure notification", async () => {
     const client = new UiClient();
+
     client.probe.mockResolvedValue({
       supported: false,
       secureContext: true,
@@ -193,15 +216,13 @@ describe("App", () => {
       shaderF16: false,
       reason: "WebGPU is unavailable",
     });
-    const show = vi.spyOn(notifications, "show");
     renderApp(client);
 
     expect(await screen.findByText("Browser inference unavailable")).toBeTruthy();
-    expect(show).not.toHaveBeenCalled();
+    expect(screen.queryByText("Operation failed")).toBeNull();
 
-    await userEvent.click(screen.getByRole("button", { name: /retry capability check/i }));
+    await userEvent.click(screen.getByRole("button", { name: /try again/i }));
     await waitFor(() => expect(client.probe).toHaveBeenCalledTimes(2));
-    expect(show).not.toHaveBeenCalled();
-    show.mockRestore();
+    expect(screen.queryByText("Operation failed")).toBeNull();
   });
 });

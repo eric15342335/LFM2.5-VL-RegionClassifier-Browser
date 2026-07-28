@@ -2,6 +2,37 @@ body {
   margin: 0;
 }
 
+.picker-root[data-drag-active="true"] {
+  outline: 2px solid var(--mantine-primary-color-filled);
+}
+
+.coordinate-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--mantine-spacing-sm);
+}
+
+.coordinate-field {
+  display: grid;
+  gap: var(--mantine-spacing-xs);
+}
+
+.coordinate-label {
+  color: var(--mantine-color-dimmed);
+  font-size: var(--mantine-font-size-sm);
+}
+
+.coordinate-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
+  color: var(--mantine-color-text);
+  border: 1px solid var(--mantine-color-dark-4);
+  border-radius: var(--mantine-radius-sm);
+  background: var(--mantine-color-body);
+  font: inherit;
+}
+
 .image-canvas-shell {
   position: relative;
   display: grid;

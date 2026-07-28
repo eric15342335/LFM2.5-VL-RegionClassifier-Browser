@@ -36,6 +36,7 @@ describe("bounded UI image previews", () => {
   it("uses high-quality ImageBitmap resizing and releases the full-resolution temporary", async () => {
     const source = bitmap(4000, 2000);
     const preview = bitmap(1200, 600);
+
     createImageBitmapMock.mockResolvedValueOnce(preview);
 
     expect(await createPreviewBitmap(source)).toBe(preview);
@@ -56,6 +57,7 @@ describe("bounded UI image previews", () => {
       imageSmoothingQuality: "low" as ImageSmoothingQuality,
       drawImage: vi.fn(),
     };
+
     Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
       configurable: true,
       writable: true,
@@ -66,6 +68,7 @@ describe("bounded UI image previews", () => {
 
     expect(await createPreviewBitmap(source)).toBe(preview);
     const canvas = createImageBitmapMock.mock.calls[1]?.[0] as HTMLCanvasElement;
+
     expect(canvas).toBeInstanceOf(HTMLCanvasElement);
     expect(canvas.width).toBe(600);
     expect(canvas.height).toBe(1200);
@@ -79,6 +82,7 @@ describe("bounded UI image previews", () => {
     const source = bitmap(4000, 2000);
     const preview = bitmap(1200, 600);
     let resolvePreview: ((value: ImageBitmap) => void) | undefined;
+
     createImageBitmapMock.mockImplementation(
       () =>
         new Promise<ImageBitmap>((resolve) => {

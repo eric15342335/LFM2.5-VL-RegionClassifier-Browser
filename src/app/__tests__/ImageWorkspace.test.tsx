@@ -103,6 +103,7 @@ function renderWorkspace(
   const cropWrapper = rendered.container.querySelector(
     ".ReactCrop__child-wrapper"
   ) as HTMLDivElement;
+
   vi.spyOn(cropWrapper, "getBoundingClientRect").mockReturnValue({
     x: 0,
     y: 0,
@@ -204,6 +205,7 @@ describe("ImageWorkspace", () => {
 
     await waitFor(() => expect(onSelectionComplete).toHaveBeenCalled());
     const [minimumSelection] = onSelectionComplete.mock.calls.at(-1) as [NormalizedSelection];
+
     expect(minimumSelection.x2 - minimumSelection.x1).toBeCloseTo(MINIMUM_SELECTION_SPAN);
     expect(minimumSelection.y2 - minimumSelection.y1).toBeCloseTo(MINIMUM_SELECTION_SPAN);
   });
@@ -281,14 +283,17 @@ describe("ImageWorkspace", () => {
     fireEvent.keyDown(cropArea, { key: "ArrowRight" });
     await waitFor(() => expect(onSelectionChange).toHaveBeenCalled());
     const [movedSelection] = onSelectionChange.mock.calls.at(-1) as [NormalizedSelection];
+
     expect(movedSelection.x1).toBeCloseTo(0.1 + 1 / 640);
     expect(movedSelection.x2).toBeCloseTo(0.5 + 1 / 640);
     expect(onSelectionComplete).toHaveBeenLastCalledWith(movedSelection);
 
     const eastHandle = screen.getByRole("button", { name: "Resize selection from right" });
+
     fireEvent.keyDown(eastHandle, { key: "ArrowRight", shiftKey: true });
     await waitFor(() => expect(onSelectionChange.mock.calls).toHaveLength(2));
     const [resizedSelection] = onSelectionChange.mock.calls.at(-1) as [NormalizedSelection];
+
     expect(resizedSelection.x2).toBeGreaterThan(movedSelection.x2);
     expect(onSelectionComplete).toHaveBeenLastCalledWith(resizedSelection);
   });

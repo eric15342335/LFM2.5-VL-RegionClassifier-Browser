@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { INFERENCE_CONFIG } from "../config";
+import { withTimeout } from "../inference/capability";
 import { BrowserInferenceClient, type WorkerConnectionFactory } from "../inference/client";
 import type { WorkerApi } from "../inference/worker-api";
 import type { ClassificationResult, ImageDescriptor } from "../types";
@@ -45,7 +46,7 @@ function result(label = "cat"): ClassificationResult {
     },
     performance: {
       preprocessMs: 1,
-      webgpuInferenceMs: 5,
+      inferenceMs: 5,
       totalMs: 6,
       sourceBytes: descriptor.bytes,
       encodedJpegBytes: 100,
@@ -90,6 +91,7 @@ describe("Comlink inference client lifecycle", () => {
     const factory: WorkerConnectionFactory = () => {
       connection += 1;
       const current = connection;
+
       return {
         api: baseApi({
           loadImage: async (image) => {
@@ -97,6 +99,7 @@ describe("Comlink inference client lifecycle", () => {
           },
           classify: async () => {
             if (current === 1) throw new Error("device failed");
+
             return result("dog");
           },
         }),
@@ -139,6 +142,7 @@ describe("Comlink inference client lifecycle", () => {
     });
     const client = new BrowserInferenceClient(INFERENCE_CONFIG, factory);
     const controller = new AbortController();
+
     await client.prepare();
 
     const operation = client.classify({
@@ -146,48 +150,30 @@ describe("Comlink inference client lifecycle", () => {
       region: { x1: 0.1, y1: 0.1, x2: 0.9, y2: 0.9 },
       signal: controller.signal,
     });
+
     controller.abort();
 
     await expect(operation).rejects.toMatchObject({ name: "AbortError" });
     expect(cancel).toHaveBeenCalledOnce();
   });
 
-  it("rejects outstanding calls when the worker fails", async () => {
-    let failWorker: ((error: Error) => void) | undefined;
-    const factory: WorkerConnectionFactory = (onFailure) => {
-      failWorker = onFailure;
-      return {
-        api: baseApi({ probe: () => new Promise(() => undefined) }),
-        terminate: vi.fn(),
-      };
-    };
+  it("checks browser support without creating the inference worker", async () => {
+    const factory = vi.fn<WorkerConnectionFactory>();
     const client = new BrowserInferenceClient(INFERENCE_CONFIG, factory);
-    const operation = client.probe();
-    failWorker?.(new Error("worker crashed"));
 
-    await expect(operation).rejects.toThrow("worker crashed");
+    await client.probe();
+    expect(factory).not.toHaveBeenCalled();
   });
 
-  it("times out a capability probe that never settles", async () => {
+  it("times out a browser capability check", async () => {
     vi.useFakeTimers();
-    const terminate = vi.fn();
-    const factory: WorkerConnectionFactory = () => ({
-      api: baseApi({ probe: () => new Promise(() => undefined) }),
-      terminate,
-    });
-    const client = new BrowserInferenceClient(
-      { ...INFERENCE_CONFIG, capabilityProbeTimeoutSeconds: 1 },
-      factory
-    );
-    const rejection = expect(client.probe()).rejects.toMatchObject({
+    const result = expect(withTimeout(new Promise(() => undefined), 1000)).rejects.toMatchObject({
       name: "TimeoutError",
       message: "Browser capability check timed out",
     });
 
     await vi.advanceTimersByTimeAsync(1000);
-
-    await rejection;
-    expect(terminate).toHaveBeenCalledOnce();
+    await result;
     vi.useRealTimers();
   });
 });

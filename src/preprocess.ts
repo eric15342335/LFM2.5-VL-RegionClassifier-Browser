@@ -20,13 +20,16 @@ export function roundHalfEven(value: number): number {
   if (!Number.isFinite(value)) return value;
   const lower = Math.floor(value);
   const fraction = value - lower;
+
   if (fraction < 0.5) return lower;
   if (fraction > 0.5) return lower + 1;
+
   return lower % 2 === 0 ? lower : lower + 1;
 }
 
 export function roundTo(value: number, digits: number): number {
   const factor = 10 ** digits;
+
   return roundHalfEven(value * factor) / factor;
 }
 
@@ -80,6 +83,7 @@ function averageRgb(rgba: Uint8ClampedArray): [number, number, number] {
     green += rgba[index + 1] ?? 0;
     blue += rgba[index + 2] ?? 0;
   }
+
   return [roundHalfEven(red / pixels), roundHalfEven(green / pixels), roundHalfEven(blue / pixels)];
 }
 
@@ -95,8 +99,10 @@ function extractCrop(
   for (let y = 0; y < height; y += 1) {
     const sourceStart = ((top + y) * image.width + left) * 4;
     const targetStart = y * width * 4;
+
     output.set(image.rgba.subarray(sourceStart, sourceStart + width * 4), targetStart);
   }
+
   return output;
 }
 
@@ -114,6 +120,7 @@ function isolateSelection(
     for (let x = 0; x < width; x += 1) {
       const selected = x >= left && x <= right && y >= top && y <= bottom;
       const index = (y * width + x) * 4;
+
       if (selected) {
         selectedPixels += 1;
         cropRgba[index + 3] = 255;
@@ -125,6 +132,7 @@ function isolateSelection(
       }
     }
   }
+
   return selectedPixels;
 }
 
@@ -140,8 +148,10 @@ function rgbaToCanvas(rgba: Uint8ClampedArray, width: number, height: number): O
     alpha: false,
     willReadFrequently: false,
   });
+
   if (!context) throw new Error("2D canvas is unavailable");
   context.putImageData(toCanvasImageData(rgba, width, height), 0, 0);
+
   return canvas;
 }
 
@@ -156,11 +166,13 @@ async function resizeAndEncode(
   const sourceCanvas = rgbaToCanvas(rgba, sourceWidth, sourceHeight);
   const targetCanvas = new OffscreenCanvas(targetWidth, targetHeight);
   const context = targetCanvas.getContext("2d", { alpha: false });
+
   if (!context) throw new Error("2D canvas is unavailable");
 
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "low";
   context.drawImage(sourceCanvas, 0, 0, sourceWidth, sourceHeight, 0, 0, targetWidth, targetHeight);
+
   return targetCanvas.convertToBlob({
     type: "image/jpeg",
     quality: jpegQuality / 100,
@@ -186,6 +198,7 @@ export async function prepareCrop(
   config: InferenceConfig
 ): Promise<PreparedCrop> {
   const started = performance.now();
+
   validateRegion(region);
 
   const selectionBox = pixelBox(region, image.width, image.height);

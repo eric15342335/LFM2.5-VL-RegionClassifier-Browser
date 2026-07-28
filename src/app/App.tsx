@@ -14,19 +14,23 @@ import {
   ThemeIcon,
   Title,
 } from "@mantine/core";
-import { Dropzone } from "@mantine/dropzone";
-import { notifications } from "@mantine/notifications";
 import { useMachine } from "@xstate/react";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { INFERENCE_CONFIG } from "../config";
-import { ACCEPTED_IMAGE_MIME_TYPES, SUPPORTED_IMAGE_FORMATS_LABEL } from "../image-format";
+import { SUPPORTED_IMAGE_FORMATS_LABEL } from "../image-format";
 import { BrowserInferenceClient, type InferenceClientPort } from "../inference/client";
 import { appMachine, primaryActionFor, type ImageDecoder } from "./app.machine";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { formatBytes, formatDuration, formatModelSize } from "./format";
 import { closeImageBitmap } from "./image-preview";
-import { ImageWorkspace } from "./ImageWorkspace";
+import { EmptyImageWorkspace, ImageFilePicker } from "./ImageFilePicker";
 import { ResultPanel } from "./ResultPanel";
+
+const LazyImageWorkspace = lazy(() =>
+  import("./ImageWorkspace").then((module) => ({ default: module.ImageWorkspace }))
+);
+
+type AppNotice = Readonly<{ id: number; title: string; message: string; tone: "error" }>;
 
 function RuntimeBadge({
   supported,
@@ -52,6 +56,7 @@ function RuntimeBadge({
         Model ready
       </Badge>
     );
+
   return <Badge variant="outline">WebGPU ready</Badge>;
 }
 
@@ -65,8 +70,10 @@ export function App({
   const [elapsed, setElapsed] = useState(0);
   const dropzoneOpenRef = useRef<(() => void) | null>(null);
   const lastErrorRef = useRef<string | null>(null);
+  const [notice, setNotice] = useState<AppNotice | null>(null);
   const context = snapshot.context;
-  const modelSize = formatModelSize(INFERENCE_CONFIG.model.estimated_download_bytes);
+  const downloadBytes = context.capability?.storage?.download;
+  const modelSize = downloadBytes === undefined ? undefined : formatModelSize(downloadBytes);
   const action = primaryActionFor(snapshot, modelSize);
   const busy =
     snapshot.hasTag("modelLoading") ||
@@ -74,55 +81,74 @@ export function App({
     snapshot.hasTag("classifying");
   const supported = context.capability?.supported ?? !snapshot.hasTag("unsupported");
   const unsupported = snapshot.hasTag("unsupported");
+  const showNotice = useCallback((title: string, message: string) => {
+    setNotice({ id: Date.now(), title, message, tone: "error" });
+  }, []);
 
   useEffect(() => () => void client.dispose(), [client]);
 
   useEffect(() => {
     const previewBitmap = context.image?.previewBitmap;
+
     return () => closeImageBitmap(previewBitmap);
   }, [context.image?.previewBitmap]);
 
   useEffect(() => {
     if (context.operationStartedAt === null) {
       setElapsed(context.elapsedMs);
+
       return;
     }
     const update = () =>
       setElapsed(performance.now() - (context.operationStartedAt ?? performance.now()));
+
     update();
-    const interval = window.setInterval(update, 100);
+    const interval = window.setInterval(update, 50);
+
     return () => window.clearInterval(interval);
   }, [context.elapsedMs, context.operationStartedAt]);
 
   useEffect(() => {
     if (!context.technicalError) {
       lastErrorRef.current = null;
+
       return;
     }
     if (unsupported) {
       lastErrorRef.current = context.technicalError;
+
       return;
     }
     if (context.technicalError === lastErrorRef.current) return;
 
     lastErrorRef.current = context.technicalError;
-    notifications.show({
-      title: "Operation failed",
-      message: context.message,
-      color: "red",
-      autoClose: 7000,
-    });
-  }, [context.message, context.technicalError, unsupported]);
+    showNotice("Operation failed", context.message);
+  }, [context.message, context.technicalError, showNotice, unsupported]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timeout = window.setTimeout(() => setNotice(null), 7000);
+
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && snapshot.hasTag("classifying")) send({ type: "CANCEL" });
     };
+
     window.addEventListener("keydown", onKeyDown);
+
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [send, snapshot]);
 
   const acceptFile = (file: File) => send({ type: "FILE_SELECTED", file });
+  const rejectFile = () =>
+    showNotice(
+      "Image rejected",
+      "Use a static JPEG, PNG, or WebP within the configured size limit."
+    );
+  const preloadImageWorkspace = () => void import("./ImageWorkspace");
 
   const runPrimaryAction = () => {
     if (action.intent === "load-model") send({ type: "LOAD_MODEL" });
@@ -155,7 +181,12 @@ export function App({
                 radius="md"
                 variant="gradient"
               >
-                AI
+                <img
+                  src="/logo.svg"
+                  alt=""
+                  width={24}
+                  height={24}
+                />
               </ThemeIcon>
               <Box>
                 <Title
@@ -191,22 +222,13 @@ export function App({
             >
               <Grid align="center">
                 <Grid.Col span={{ base: 12, md: 7 }}>
-                  <Dropzone
+                  <ImageFilePicker
                     openRef={dropzoneOpenRef}
-                    onDrop={(files) => files[0] && acceptFile(files[0])}
-                    onReject={() =>
-                      notifications.show({
-                        title: "Image rejected",
-                        message:
-                          "Use a static JPEG, PNG, or WebP within the configured size limit.",
-                        color: "red",
-                      })
-                    }
-                    accept={ACCEPTED_IMAGE_MIME_TYPES}
+                    onAccept={acceptFile}
+                    onReject={rejectFile}
+                    onIntent={preloadImageWorkspace}
                     maxSize={INFERENCE_CONFIG.maxImageBytes}
-                    multiple={false}
                     disabled={busy}
-                    p="md"
                   >
                     <Group
                       justify="space-between"
@@ -222,18 +244,8 @@ export function App({
                           {formatBytes(INFERENCE_CONFIG.maxImageBytes)}
                         </Text>
                       </Box>
-                      <Button
-                        variant="light"
-                        disabled={busy}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          dropzoneOpenRef.current?.();
-                        }}
-                      >
-                        Browse
-                      </Button>
                     </Group>
-                  </Dropzone>
+                  </ImageFilePicker>
                 </Grid.Col>
                 <Grid.Col span={{ base: 12, md: 5 }}>
                   <Stack gap="xs">
@@ -242,14 +254,16 @@ export function App({
                         size="sm"
                         fw={600}
                       >
-                        Current operation
+                        Status
                       </Text>
-                      <Text
-                        size="sm"
-                        c="dimmed"
-                      >
-                        {formatDuration(elapsed)}
-                      </Text>
+                      {busy && (
+                        <Text
+                          size="sm"
+                          c="dimmed"
+                        >
+                          {formatDuration(elapsed)}
+                        </Text>
+                      )}
                     </Group>
                     <Progress
                       value={context.progress?.progress ?? (busy ? 10 : 0)}
@@ -289,36 +303,30 @@ export function App({
               {context.message}
             </div>
 
-            {snapshot.hasTag("unsupported") && (
-              <Alert
-                color="red"
-                title="Browser inference unavailable"
-              >
-                {context.technicalError ?? "Use a secure-context browser with WebGPU support."}
-                <Button
-                  mt="sm"
-                  size="xs"
-                  variant="light"
-                  onClick={() => send({ type: "RETRY_PROBE" })}
-                >
-                  Retry capability check
-                </Button>
-              </Alert>
-            )}
-
-            <Grid align="stretch">
+            <Grid
+              className="main-workspace-grid"
+              align="stretch"
+            >
               <Grid.Col span={{ base: 12, lg: 8 }}>
-                <ImageWorkspace
-                  image={context.image}
-                  selection={context.selection}
-                  disabled={busy}
-                  coordinatesOpen={coordinatesOpen}
-                  onCoordinatesOpenChange={setCoordinatesOpen}
-                  onSelectionChange={(selection) => send({ type: "SELECTION_CHANGED", selection })}
-                  onSelectionComplete={(selection) =>
-                    send({ type: "SELECTION_COMPLETED", selection })
-                  }
-                />
+                {context.image ? (
+                  <Suspense fallback={<EmptyImageWorkspace />}>
+                    <LazyImageWorkspace
+                      image={context.image}
+                      selection={context.selection}
+                      disabled={busy}
+                      coordinatesOpen={coordinatesOpen}
+                      onCoordinatesOpenChange={setCoordinatesOpen}
+                      onSelectionChange={(selection) =>
+                        send({ type: "SELECTION_CHANGED", selection })
+                      }
+                      onSelectionComplete={(selection) =>
+                        send({ type: "SELECTION_COMPLETED", selection })
+                      }
+                    />
+                  </Suspense>
+                ) : (
+                  <EmptyImageWorkspace />
+                )}
               </Grid.Col>
               <Grid.Col span={{ base: 12, lg: 4 }}>
                 <ResultPanel
@@ -335,9 +343,50 @@ export function App({
               technicalError={context.technicalError}
               onClearEvents={() => send({ type: "CLEAR_EVENTS" })}
             />
+
+            {unsupported && (
+              <Alert
+                color="red"
+                title="Browser inference unavailable"
+              >
+                {context.technicalError ?? "Use a secure-context browser with WebGPU support."}
+                <Button
+                  mt="sm"
+                  size="xs"
+                  variant="light"
+                  onClick={() => send({ type: "RETRY_PROBE" })}
+                >
+                  Try again
+                </Button>
+              </Alert>
+            )}
           </Stack>
         </Container>
       </AppShell.Main>
+      <div
+        className="notice-region"
+        aria-live="assertive"
+        aria-atomic="true"
+      >
+        {notice && (
+          <div
+            className="app-notice"
+            role="alert"
+          >
+            <div>
+              <Text fw={700}>{notice.title}</Text>
+              <Text size="sm">{notice.message}</Text>
+            </div>
+            <button
+              type="button"
+              aria-label="Dismiss notification"
+              onClick={() => setNotice(null)}
+            >
+              ×
+            </button>
+          </div>
+        )}
+      </div>
     </AppShell>
   );
 }

@@ -29,6 +29,7 @@ export function expectedLfm2VlMaxNumPatches(
 ): number {
   const thumbnailPatches = maxImageTokens * downsampleFactor ** 2;
   const tilePatches = doImageSplitting ? (tileSize / encoderPatchSize) ** 2 : 0;
+
   return Math.max(thumbnailPatches, tilePatches);
 }
 
@@ -40,6 +41,7 @@ export function lfm2VlVisualTokenCount(
 ): number {
   const tokensPerAxis = (size: number) =>
     Math.ceil(Math.floor(size / encoderPatchSize) / downsampleFactor);
+
   return tokensPerAxis(height) * tokensPerAxis(width);
 }
 
@@ -52,5 +54,6 @@ export function multimodalBudgetMessage(
     imagePlaceholderCount === undefined
       ? "unknown image placeholders"
       : `${imagePlaceholderCount} image placeholders`;
+
   return `Prepared multimodal input ${inputLength} > application budget ${contextTokens} (${placeholders})`;
 }

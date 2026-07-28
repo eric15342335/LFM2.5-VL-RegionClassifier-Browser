@@ -95,6 +95,7 @@ describe("browser crop preparation", () => {
     );
 
     const [source, target] = FakeOffscreenCanvas.instances;
+
     expect(source).toBeDefined();
     expect(target).toBeDefined();
     expect(prepared.details).toMatchObject({
@@ -110,6 +111,7 @@ describe("browser crop preparation", () => {
     expect(prepared.blob).toMatchObject({ type: "image/jpeg", size: 4 });
 
     const masked = source?.context.putImageData.mock.calls[0]?.[0] as FakeImageData;
+
     expect(masked.data).toEqual(
       new Uint8ClampedArray([
         8, 28, 48, 255, 8, 28, 48, 255, 8, 28, 48, 255, 8, 28, 48, 255, 8, 28, 48, 255, 5, 25, 45,

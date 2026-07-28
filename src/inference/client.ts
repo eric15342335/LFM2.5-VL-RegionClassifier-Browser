@@ -10,6 +10,7 @@ import type {
   InferenceEngine,
   ProgressEvent,
 } from "../types";
+import { probeBrowserCapability, withTimeout } from "./capability";
 import type { WorkerApi } from "./worker-api";
 
 export type InferenceLifecycleListener = (error: Error) => void;
@@ -34,7 +35,9 @@ const CANCELLATION_GRACE_PERIOD_MS = 1500;
 
 function errorWithName(name: string, message: string): Error {
   const error = new Error(message);
+
   error.name = name;
+
   return error;
 }
 
@@ -50,6 +53,7 @@ export function createComlinkConnection(
     type: "module",
     name: "lfm-browser-inference",
   });
+
   worker.addEventListener("error", (event) =>
     onFailure(new Error(event.message || "Browser inference worker failed"))
   );
@@ -58,6 +62,7 @@ export function createComlinkConnection(
   );
 
   const remote = wrap<WorkerApi>(worker);
+
   void remote
     .setDeviceLostListener(proxy(onDeviceLost))
     .catch((error) => onFailure(toError(error)));
@@ -94,12 +99,14 @@ export class BrowserInferenceClient implements InferenceClientPort {
       (error) => this.hardReset(error),
       (reason) => this.hardReset(new Error(`WebGPU device lost: ${reason}`))
     );
+
     return this.connection;
   }
 
   private invoke<T>(operation: Promise<T>): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const rejectPending = (error: Error) => reject(error);
+
       this.pendingRejectors.add(rejectPending);
       operation
         .then(resolve, (error) => reject(toError(error)))
@@ -132,19 +139,17 @@ export class BrowserInferenceClient implements InferenceClientPort {
 
   subscribeLifecycle(listener: InferenceLifecycleListener): () => void {
     this.lifecycleListeners.add(listener);
+
     return () => this.lifecycleListeners.delete(listener);
   }
 
   async probe(): Promise<BrowserCapability> {
-    const operation = this.invoke(this.ensureConnection().api.probe(this.config));
-    const timeout = setTimeout(() => {
-      this.hardReset(errorWithName("TimeoutError", "Browser capability check timed out"));
-    }, this.config.capabilityProbeTimeoutSeconds * 1000);
-    try {
-      return v.parse(BrowserCapabilitySchema, await operation);
-    } finally {
-      clearTimeout(timeout);
-    }
+    const capability = await withTimeout(
+      probeBrowserCapability(),
+      this.config.capabilityProbeTimeoutSeconds * 1000
+    );
+
+    return v.parse(BrowserCapabilitySchema, capability);
   }
 
   async prepare(onProgress?: (event: ProgressEvent) => void): Promise<void> {
@@ -158,6 +163,7 @@ export class BrowserInferenceClient implements InferenceClientPort {
     const timeout = setTimeout(() => {
       this.hardReset(errorWithName("TimeoutError", "Browser model loading timed out"));
     }, this.config.modelLoadTimeoutSeconds * 1000);
+
     try {
       await operation;
       this.prepared = true;
@@ -168,6 +174,7 @@ export class BrowserInferenceClient implements InferenceClientPort {
 
   async loadImage(file: File, descriptor: ImageDescriptor, signal?: AbortSignal): Promise<void> {
     const bytes = await file.arrayBuffer();
+
     if (signal?.aborted) {
       throw signal.reason ?? new DOMException("Image loading cancelled", "AbortError");
     }
@@ -185,6 +192,7 @@ export class BrowserInferenceClient implements InferenceClientPort {
 
   private async classifyOnce(request: ClassifyRequest): Promise<ClassificationResult> {
     const jobId = this.nextJobId++;
+
     this.currentJobId = jobId;
     const abort = () => {
       void this.connection?.api.cancel(jobId).catch(() => undefined);
@@ -193,6 +201,7 @@ export class BrowserInferenceClient implements InferenceClientPort {
         errorWithName("AbortError", "Browser classification cancelled")
       );
     };
+
     request.signal?.addEventListener("abort", abort, { once: true });
 
     try {
@@ -217,6 +226,7 @@ export class BrowserInferenceClient implements InferenceClientPort {
           errorWithName("TimeoutError", "Browser classification timed out")
         );
       }, this.config.inferenceTimeoutSeconds * 1000);
+
       try {
         return v.parse(ClassificationResultSchema, await operation);
       } finally {
@@ -234,6 +244,7 @@ export class BrowserInferenceClient implements InferenceClientPort {
 
   private async rebuild(onProgress?: (event: ProgressEvent) => void): Promise<void> {
     const retained = [...this.retainedImages.values()];
+
     this.hardReset(new Error("Recreating browser inference worker"), false);
     this.ensureConnection();
     await this.prepare(onProgress);
@@ -257,6 +268,7 @@ export class BrowserInferenceClient implements InferenceClientPort {
         detail: { error: toError(error).message },
       });
       await this.rebuild(request.onProgress);
+
       return this.classifyOnce(request);
     }
   }
@@ -264,6 +276,7 @@ export class BrowserInferenceClient implements InferenceClientPort {
   cancel(): void {
     if (this.currentJobId === null || !this.connection) return;
     const jobId = this.currentJobId;
+
     void this.connection.api.cancel(jobId).catch(() => undefined);
     this.scheduleCancellationReset(
       jobId,

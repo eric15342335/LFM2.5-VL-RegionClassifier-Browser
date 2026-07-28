@@ -38,15 +38,18 @@ function uint32Le(bytes: Uint8Array, offset: number): number {
 
 function isGif(bytes: Uint8Array): boolean {
   const header = ascii(bytes, 0, 6);
+
   return header === "GIF87a" || header === "GIF89a";
 }
 
 function gifFrameCount(bytes: Uint8Array): number {
   let frames = 0;
+
   for (let index = 13; index < bytes.length; index += 1) {
     if (bytes[index] === 0x2c) frames += 1;
     if (frames > 1) return frames;
   }
+
   return frames;
 }
 
@@ -64,16 +67,19 @@ function isPng(bytes: Uint8Array): boolean {
 
 function pngFrameCount(bytes: Uint8Array): number {
   let offset = 8;
+
   while (offset + 12 <= bytes.length) {
     const length = uint32Be(bytes, offset);
     const type = ascii(bytes, offset + 4, 4);
     const dataStart = offset + 8;
+
     if (type === "acTL" && length >= 8 && dataStart + length <= bytes.length) {
       return uint32Be(bytes, dataStart);
     }
     if (type === "IEND") return 1;
     offset = dataStart + length + 4;
   }
+
   return 1;
 }
 
@@ -84,9 +90,11 @@ function isWebP(bytes: Uint8Array): boolean {
 function webpFrameCount(bytes: Uint8Array): number {
   let offset = 12;
   let frames = 0;
+
   while (offset + 8 <= bytes.length) {
     const type = ascii(bytes, offset, 4);
     const length = uint32Le(bytes, offset + 4);
+
     if (type === "ANIM") return 2;
     if (type === "ANMF") {
       frames += 1;
@@ -94,6 +102,7 @@ function webpFrameCount(bytes: Uint8Array): number {
     }
     offset += 8 + length + (length % 2);
   }
+
   return Math.max(1, frames);
 }
 
@@ -123,6 +132,7 @@ export function imageFrameCount(bytes: Uint8Array): number {
 
 export function validateImageContainer(bytes: Uint8Array): void {
   const format = detectImageFormat(bytes);
+
   if (!SUPPORTED_IMAGE_FORMATS.includes(format as (typeof SUPPORTED_IMAGE_FORMATS)[number])) {
     throw new Error(`Invalid or unsupported image; use ${SUPPORTED_IMAGE_FORMATS_LABEL}`);
   }

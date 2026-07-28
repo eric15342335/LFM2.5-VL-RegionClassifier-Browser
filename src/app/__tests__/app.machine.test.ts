@@ -17,7 +17,6 @@ const capability: BrowserCapability = {
   adapterAcquired: true,
   deviceAcquired: true,
   shaderF16: true,
-  storage: { required: 573_000_000, available: 1_000_000_000 },
 };
 
 const descriptor: ImageDescriptor = {
@@ -59,7 +58,7 @@ const result: ClassificationResult = {
   },
   performance: {
     preprocessMs: 10,
-    webgpuInferenceMs: 30,
+    inferenceMs: 30,
     totalMs: 40,
     sourceBytes: 128,
     encodedJpegBytes: 96,
@@ -78,10 +77,11 @@ class FakeClient implements InferenceClientPort {
   readonly name = "fake";
   loadedImages: string[] = [];
   lifecycleListeners = new Set<InferenceLifecycleListener>();
+  capabilityResult = capability;
   classifyImpl: (request: ClassifyRequest) => Promise<ClassificationResult> = async () => result;
 
   async probe(): Promise<BrowserCapability> {
-    return capability;
+    return this.capabilityResult;
   }
 
   async prepare(onProgress?: (event: ProgressEvent) => void): Promise<void> {
@@ -112,6 +112,7 @@ class FakeClient implements InferenceClientPort {
 
   subscribeLifecycle(listener: InferenceLifecycleListener): () => void {
     this.lifecycleListeners.add(listener);
+
     return () => this.lifecycleListeners.delete(listener);
   }
 
@@ -133,15 +134,29 @@ function decoder(close = vi.fn()): ImageDecoder {
 
 async function startOperational(client = new FakeClient()) {
   const actor = createActor(appMachine, { input: { client, decodeImage: decoder() } }).start();
+
   await waitFor(actor, (snapshot) => snapshot.matches("operational"));
+
   return { actor, client };
 }
 
 describe("appMachine", () => {
+  it("explains the Q8 WASM fallback when shader-f16 is unavailable", async () => {
+    const client = new FakeClient();
+
+    client.capabilityResult = { ...capability, shaderF16: false };
+    const { actor } = await startOperational(client);
+
+    expect(actor.getSnapshot().context.message).toBe(
+      "WebGPU is available without shader-f16. The model will run on CPU via WASM."
+    );
+    actor.stop();
+  });
+
   it("coordinates model, image, selection, and classification workflows", async () => {
     const { actor, client } = await startOperational();
 
-    expect(primaryActionFor(actor.getSnapshot(), "~573 MB").intent).toBe("load-model");
+    expect(primaryActionFor(actor.getSnapshot(), "model size").intent).toBe("load-model");
 
     actor.send({ type: "LOAD_MODEL" });
     actor.send({ type: "FILE_SELECTED", file: file() });
@@ -152,13 +167,13 @@ describe("appMachine", () => {
     );
 
     expect(client.loadedImages).toEqual([descriptor.id]);
-    expect(primaryActionFor(actor.getSnapshot(), "~573 MB").intent).toBe("focus-selection");
+    expect(primaryActionFor(actor.getSnapshot(), "model size").intent).toBe("focus-selection");
 
     actor.send({
       type: "SELECTION_CHANGED",
       selection: { x1: 0.1, y1: 0.2, x2: 0.5, y2: 0.6 },
     });
-    expect(primaryActionFor(actor.getSnapshot(), "~573 MB").intent).toBe("classify");
+    expect(primaryActionFor(actor.getSnapshot(), "model size").intent).toBe("classify");
 
     actor.send({ type: "CLASSIFY" });
     await waitFor(actor, (snapshot) => snapshot.hasTag("classificationSuccess"));
@@ -180,6 +195,7 @@ describe("appMachine", () => {
 
   it("classifies automatically when a selection gesture completes", async () => {
     const { actor } = await startOperational();
+
     actor.send({ type: "LOAD_MODEL" });
     actor.send({ type: "FILE_SELECTED", file: file() });
     await waitFor(
@@ -199,6 +215,7 @@ describe("appMachine", () => {
 
   it("cancels an active classification through the invoked actor signal", async () => {
     const { actor, client } = await startOperational();
+
     client.classifyImpl = (request) =>
       new Promise((_resolve, reject) => {
         request.signal?.addEventListener(
@@ -231,6 +248,7 @@ describe("appMachine", () => {
 
   it("derives readiness from the model state and restores it from a ready progress event", async () => {
     const { actor, client } = await startOperational();
+
     actor.send({ type: "LOAD_MODEL" });
     await waitFor(actor, (snapshot) => snapshot.hasTag("modelReady"));
 
@@ -239,7 +257,7 @@ describe("appMachine", () => {
 
     expect("modelPrepared" in actor.getSnapshot().context).toBe(false);
     expect(actor.getSnapshot().context.technicalError).toContain("GPU adapter reset");
-    expect(primaryActionFor(actor.getSnapshot(), "~573 MB").intent).toBe("load-model");
+    expect(primaryActionFor(actor.getSnapshot(), "model size").intent).toBe("load-model");
 
     actor.send({
       type: "PROGRESS",
@@ -252,7 +270,7 @@ describe("appMachine", () => {
       },
     });
     await waitFor(actor, (snapshot) => snapshot.hasTag("modelReady"));
-    expect(primaryActionFor(actor.getSnapshot(), "~573 MB").intent).toBe("choose-image");
+    expect(primaryActionFor(actor.getSnapshot(), "model size").intent).toBe("choose-image");
     actor.stop();
   });
 });

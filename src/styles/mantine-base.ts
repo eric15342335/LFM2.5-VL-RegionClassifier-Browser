@@ -1,0 +1,17 @@
+import "@mantine/core/styles/baseline.layer.css";
+import "@mantine/core/styles/default-css-variables.layer.css";
+import "@mantine/core/styles/global.layer.css";
+import "@mantine/core/styles/UnstyledButton.layer.css";
+import "@mantine/core/styles/Button.layer.css";
+import "@mantine/core/styles/Alert.layer.css";
+import "@mantine/core/styles/AppShell.layer.css";
+import "@mantine/core/styles/Badge.layer.css";
+import "@mantine/core/styles/Container.layer.css";
+import "@mantine/core/styles/Grid.layer.css";
+import "@mantine/core/styles/Group.layer.css";
+import "@mantine/core/styles/Paper.layer.css";
+import "@mantine/core/styles/Progress.layer.css";
+import "@mantine/core/styles/Stack.layer.css";
+import "@mantine/core/styles/Text.layer.css";
+import "@mantine/core/styles/ThemeIcon.layer.css";
+import "@mantine/core/styles/Title.layer.css";

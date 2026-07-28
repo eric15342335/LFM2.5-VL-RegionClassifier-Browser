@@ -1,16 +1,6 @@
-import {
-  Box,
-  Button,
-  Collapse,
-  Group,
-  NumberInput,
-  Paper,
-  SimpleGrid,
-  Stack,
-  Text,
-  Title,
-} from "@mantine/core";
+import { Box, Button, Collapse, Group, Paper, Stack, Text, Title } from "@mantine/core";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import "react-image-crop/dist/ReactCrop.css";
 import ReactCrop, { type PercentCrop } from "react-image-crop";
 import {
   isUsableSelection,
@@ -63,20 +53,24 @@ export function ImageWorkspace({
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
+
     if (!canvas) return;
 
     const context = canvas.getContext("2d");
+
     if (!context) return;
 
     if (!image) {
       canvas.width = 1;
       canvas.height = 1;
       context.clearRect(0, 0, 1, 1);
+
       return;
     }
 
     const width = image.previewBitmap.width;
     const height = image.previewBitmap.height;
+
     canvas.width = width;
     canvas.height = height;
     context.clearRect(0, 0, width, height);
@@ -85,13 +79,16 @@ export function ImageWorkspace({
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
+
     if (!canvas || !image) {
       setRenderedCanvasSize({ width: 0, height: 0 });
+
       return;
     }
 
     const updateRenderedCanvasSize = () => {
       const { width, height } = canvas.getBoundingClientRect();
+
       setRenderedCanvasSize((current) =>
         current.width === width && current.height === height ? current : { width, height }
       );
@@ -101,7 +98,9 @@ export function ImageWorkspace({
     if (typeof ResizeObserver === "undefined") return;
 
     const observer = new ResizeObserver(updateRenderedCanvasSize);
+
     observer.observe(canvas);
+
     return () => observer.disconnect();
   }, [image]);
 
@@ -125,6 +124,7 @@ export function ImageWorkspace({
     setTransientCrop(percentCrop);
 
     const next = percentCropToNormalized(percentCrop);
+
     if (selection && isUsableSelection(next) && !selectionsEqual(next, selection)) {
       onSelectionChange(next);
     }
@@ -133,11 +133,13 @@ export function ImageWorkspace({
   const commitCrop = (percentCrop: PercentCrop) => {
     if (cancelledCropCompletionRef.current) {
       cancelledCropCompletionRef.current = false;
+
       return;
     }
 
     selectionBeforeDragRef.current = null;
     const next = percentCropToNormalized(percentCrop);
+
     if (!isUsableSelection(next)) return;
 
     setTransientCrop(undefined);
@@ -146,6 +148,7 @@ export function ImageWorkspace({
 
   const discardIncompleteCrop = () => {
     const currentCrop = transientCrop ?? crop;
+
     if (!currentCrop || isUsableSelection(percentCropToNormalized(currentCrop))) return;
 
     setTransientCrop(undefined);
@@ -162,6 +165,7 @@ export function ImageWorkspace({
       setTransientCrop(undefined);
       if (selectionBeforeDragRef.current) onSelectionChange(selectionBeforeDragRef.current);
       selectionBeforeDragRef.current = null;
+
       return;
     }
 
@@ -183,6 +187,7 @@ export function ImageWorkspace({
       width: coordinates.x2 - coordinates.x1,
       height: coordinates.y2 - coordinates.y1,
     });
+
     setTransientCrop(undefined);
 
     if (isUsableSelection(next)) onSelectionComplete(next);
@@ -287,22 +292,29 @@ export function ImageWorkspace({
             p="sm"
             radius="md"
           >
-            <SimpleGrid cols={{ base: 2, sm: 4 }}>
+            <div className="coordinate-grid">
               {(["x1", "y1", "x2", "y2"] as const).map((key) => (
-                <NumberInput
+                <label
                   key={key}
-                  ref={key === "x1" ? x1Ref : undefined}
-                  label={`${key.toUpperCase()} %`}
-                  value={coordinates[key]}
-                  min={0}
-                  max={100}
-                  step={0.01}
-                  decimalScale={4}
-                  disabled={!image || disabled}
-                  onChange={(value) => updateCoordinate(key, value)}
-                />
+                  className="coordinate-field"
+                >
+                  <span className="coordinate-label">{key.toUpperCase()} %</span>
+                  <input
+                    ref={key === "x1" ? x1Ref : undefined}
+                    className="coordinate-input"
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    max={100}
+                    step={0.01}
+                    value={coordinates[key]}
+                    disabled={!image || disabled}
+                    aria-label={`${key.toUpperCase()} %`}
+                    onChange={(event) => updateCoordinate(key, event.currentTarget.value)}
+                  />
+                </label>
               ))}
-            </SimpleGrid>
+            </div>
             <Group
               justify="flex-end"
               mt="sm"

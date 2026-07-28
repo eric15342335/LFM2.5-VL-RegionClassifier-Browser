@@ -87,6 +87,7 @@ function errorDetails(error: unknown): string {
   if (error instanceof Error) {
     return error.stack ? `${error.name}: ${error.message}\n${error.stack}` : error.message;
   }
+
   return String(error);
 }
 
@@ -99,18 +100,22 @@ async function defaultDecodeImage(
   }
   const decodedBitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
   let decodedBitmapOwned = true;
+
   try {
     if (signal.aborted) {
       throw signal.reason ?? new DOMException("Image loading cancelled", "AbortError");
     }
     const { width, height } = decodedBitmap;
+
     if (width * height > INFERENCE_CONFIG.maxImagePixels) {
       throw new Error("Image has too many decoded pixels");
     }
 
     const previewPromise = createPreviewBitmap(decodedBitmap, signal);
+
     decodedBitmapOwned = false;
     const previewBitmap = await previewPromise;
+
     return {
       previewBitmap,
       descriptor: {
@@ -134,7 +139,9 @@ const probeActor = fromPromise<BrowserCapability, InferenceClientPort>(({ input 
 
 const prepareActor = fromPromise<number, PrepareInput>(async ({ input }) => {
   const started = performance.now();
+
   await input.client.prepare((event) => input.parent.send({ type: "PROGRESS", event }));
+
   return performance.now() - started;
 });
 
@@ -146,12 +153,15 @@ const loadImageActor = fromPromise<LoadedImage & { elapsedMs: number }, LoadImag
       closeImageBitmap(previewBitmap);
       previewBitmap = null;
     };
+
     signal.addEventListener("abort", closeUntransferredPreview, { once: true });
 
     try {
       const decoded = await input.decodeImage(input.file, signal);
+
       previewBitmap = decoded.previewBitmap;
       const { descriptor } = decoded;
+
       if (signal.aborted) {
         throw signal.reason ?? new DOMException("Image loading cancelled", "AbortError");
       }
@@ -173,7 +183,9 @@ const loadImageActor = fromPromise<LoadedImage & { elapsedMs: number }, LoadImag
         previewBitmap,
         elapsedMs: performance.now() - started,
       };
+
       previewBitmap = null;
+
       return loadedImage;
     } catch (error) {
       closeUntransferredPreview();
@@ -192,6 +204,7 @@ const classifyActor = fromPromise<LatestResult, ClassifyInput>(async ({ input, s
     signal,
     onProgress: (event) => input.parent.send({ type: "PROGRESS", event }),
   });
+
   return { ...result, browser: { roundTripMs: performance.now() - started } };
 });
 
@@ -232,6 +245,7 @@ export const appMachine = setup({
     ]),
     isAbortError: ({ event }) => {
       const error = errorOf(event);
+
       return error instanceof Error && error.name === "AbortError";
     },
     modelReadyProgress: ({ event }) => event.type === "PROGRESS" && event.event.stage === "ready",
@@ -256,7 +270,7 @@ export const appMachine = setup({
       selection: () => null,
       progress: () => null,
       technicalError: () => null,
-      message: () => "Decoding and retaining the image in this browser...",
+      message: () => "Loading the image...",
     }),
     setSelection: assign({
       selection: ({ event }) =>
@@ -293,6 +307,7 @@ export const appMachine = setup({
     }),
     imageLoaded: assign(({ event }) => {
       const output = outputOf<LoadedImage & { elapsedMs: number }>(event);
+
       return {
         image: output,
         pendingFile: null,
@@ -314,6 +329,7 @@ export const appMachine = setup({
       technicalError: ({ event }) => errorDetails(errorOf(event)),
       message: ({ event }) => {
         const error = errorOf(event);
+
         return error instanceof Error && error.name === "AbortError"
           ? "Image loading cancelled."
           : "The image could not be opened.";
@@ -321,6 +337,7 @@ export const appMachine = setup({
     }),
     classificationSucceeded: assign(({ event }) => {
       const output = outputOf<LatestResult>(event);
+
       return {
         result: output,
         operationStartedAt: null,
@@ -370,7 +387,10 @@ export const appMachine = setup({
             target: "operational",
             actions: assign({
               capability: ({ event }) => outputOf<BrowserCapability>(event),
-              message: () => "WebGPU is available. Load the local model to continue.",
+              message: ({ event }) =>
+                outputOf<BrowserCapability>(event).shaderF16
+                  ? "WebGPU with shader-f16 is available. Load the local model to continue."
+                  : "WebGPU is available without shader-f16. The model will run on CPU via WASM.",
               technicalError: () => null,
             }),
           },
@@ -538,7 +558,7 @@ export type PrimaryAction = Readonly<{
   intent: "none" | "load-model" | "choose-image" | "focus-selection" | "classify";
 }>;
 
-export function primaryActionFor(snapshot: AppSnapshot, modelSize: string): PrimaryAction {
+export function primaryActionFor(snapshot: AppSnapshot, modelSize?: string): PrimaryAction {
   if (snapshot.hasTag("probing")) {
     return { label: "Checking browser...", enabled: false, intent: "none" };
   }
@@ -555,7 +575,11 @@ export function primaryActionFor(snapshot: AppSnapshot, modelSize: string): Prim
     return { label: "Loading model...", enabled: false, intent: "none" };
   }
   if (!snapshot.hasTag("modelReady")) {
-    return { label: `Load model (${modelSize})`, enabled: true, intent: "load-model" };
+    return {
+      label: modelSize ? `Load model (${modelSize})` : "Load model",
+      enabled: true,
+      intent: "load-model",
+    };
   }
   if (!snapshot.hasTag("imageReady")) {
     return { label: "Choose an image", enabled: true, intent: "choose-image" };
@@ -563,6 +587,7 @@ export function primaryActionFor(snapshot: AppSnapshot, modelSize: string): Prim
   if (!snapshot.context.selection) {
     return { label: "Draw around an object", enabled: true, intent: "focus-selection" };
   }
+
   return {
     label: snapshot.hasTag("classificationSuccess") ? "Classify again" : "Classify selection",
     enabled: true,

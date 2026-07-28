@@ -5,7 +5,11 @@
 The application has two execution domains:
 
 1. The React main thread owns presentation, normalized selection coordinates, the XState workflow actor, the original image descriptor, a bounded preview `ImageBitmap`, and diagnostics. `BrowserInferenceClient` privately retains the original `File` for worker recovery.
-2. A dedicated module worker owns image byte decoding for inference, deterministic crop/mask/resize preprocessing, Transformers.js model loading, WebGPU execution, generation parsing, scoring, cancellation checkpoints, and device-loss observation.
+2. A dedicated module worker owns image byte decoding for inference, deterministic crop/mask/resize preprocessing, Transformers.js model loading, generation parsing, scoring, cancellation checkpoints, and WebGPU device-loss observation when applicable.
+
+## Execution profiles
+
+WebGPU is probed before model loading; `shader-f16` is optional. Adapters with it use the configured mixed-precision WebGPU profile. Adapters without it use the all-Q8 CPU/WASM profile, which downloads approximately 630.7 MB of Q8 ONNX artifacts plus configuration and tokenizer files. Images remain local in either profile, and performance depends on the selected backend.
 
 `BrowserInferenceClient` is the only main-thread module that creates or terminates the worker. Comlink supplies typed RPC, callback proxies, exception propagation, and transferable `ArrayBuffer` handling. The client deliberately retains a thin lifecycle layer for hard termination, timeouts, one recovery attempt, and replaying retained images after worker recreation.
 
@@ -43,7 +47,5 @@ Characterization tests cover normalized rectangle conversion, rectangular maskin
 - A second failure propagates to the UI with technical details and does not loop indefinitely.
 
 ## Release verification
-
-`node scripts/audit-browser-only.mjs` rejects stale imperative UI/worker protocol paths, server routes, unpinned model URLs, and inconsistent verified manifest metadata.
 
 `node scripts/verify-model-manifest.mjs` verifies the local manifest structure. Every pinned artifact records an exact byte length and SHA-256 value, and the manifest has `integrity_status: "verified"`.

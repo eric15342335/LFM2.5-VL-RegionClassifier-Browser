@@ -26,6 +26,14 @@ import type {
   InferenceConfig,
   ProgressEvent,
 } from "../types";
+import { probeBrowserCapability } from "./capability";
+import {
+  assertExecutionProfileCompatible,
+  profileUsesWebGpu,
+  selectExecutionProfile,
+  type DtypeProfile,
+  type ExecutionProfile,
+} from "./execution-profile";
 import type {
   DeviceLostListener,
   ProgressListener,
@@ -96,15 +104,17 @@ type RuntimeBackends = { onnx?: RuntimeOnnxBackend };
 type SliceableTensor = {
   slice(axis: null, range: [number | null, number | null]): unknown;
 };
+type HuggingFaceTreeEntry = { path?: unknown; size?: unknown };
 
 const sources = new Map<string, DecodedImage & { descriptor: ImageDescriptor }>();
 const stoppingCriteria = new InterruptableStoppingCriteria();
 
 let model: RuntimeModel | null = null;
 let processor: RuntimeProcessor | null = null;
-let preparedRevision: string | null = null;
+let preparedModelKey: string | null = null;
 let preparePromise: Promise<void> | null = null;
 let currentJobId: number | null = null;
+
 type QueuedClassification = WorkerClassifyRequest & {
   id: number;
   resolve: (result: ClassificationResult) => void;
@@ -119,6 +129,7 @@ const progressListeners = new Map<number, ProgressListener>();
 let deviceLostListener: DeviceLostListener | undefined;
 let deviceLossSubscribed = false;
 let successfulCapability: BrowserCapability | null = null;
+let activeExecutionProfile: ExecutionProfile | null = null;
 
 class ProcessorConfigurationError extends Error {
   constructor(message: string) {
@@ -136,8 +147,10 @@ class MultimodalInputBudgetError extends Error {
 
 function startOperation(onProgress?: ProgressListener): number {
   const id = nextOperationId++;
+
   requestStartedAt.set(id, performance.now());
   if (onProgress) progressListeners.set(id, onProgress);
+
   return id;
 }
 
@@ -161,6 +174,7 @@ function progress(
     elapsedMs: roundTo(performance.now() - (requestStartedAt.get(id) ?? performance.now()), 3),
     detail,
   };
+
   void progressListeners.get(id)?.(event);
 }
 
@@ -178,107 +192,85 @@ function runtimeBackends(): RuntimeBackends | undefined {
 
 function requiredModel(): RuntimeModel {
   if (!model) throw new Error("Browser model is not loaded");
+
   return model;
 }
 
 function requiredProcessor(): RuntimeProcessor {
   if (!processor) throw new Error("Browser processor is not loaded");
+
   return processor;
 }
 
-function recordOfNumbers(value: unknown): Record<string, number> | undefined {
-  const record = asRecord(value);
-  if (!record) return undefined;
-  const output: Record<string, number> = {};
-  for (const [key, item] of Object.entries(record)) {
-    if (typeof item === "number") output[key] = item;
+function selectedArtifactPaths(config: InferenceConfig, dtype: DtypeProfile): Set<string> {
+  return new Set(
+    config.model.artifacts
+      .filter((artifact) => {
+        if (artifact.role === "license") return false;
+        if (!artifact.dtype) return true;
+        const key =
+          artifact.role === "embedding"
+            ? "embed_tokens"
+            : artifact.role === "vision"
+              ? "vision_encoder"
+              : "decoder_model_merged";
+
+        return artifact.dtype === dtype[key];
+      })
+      .map((artifact) => artifact.path)
+  );
+}
+
+async function modelDownloadBytes(
+  config: InferenceConfig,
+  dtype: DtypeProfile
+): Promise<number | undefined> {
+  const response = await fetch(
+    `https://huggingface.co/api/models/${config.model.repository}/tree/${config.model.revision}?recursive=true&expand=false`
+  );
+
+  if (!response.ok) return undefined;
+  const files = await response.json();
+
+  if (!Array.isArray(files)) return undefined;
+  const paths = selectedArtifactPaths(config, dtype);
+  let total = 0;
+  let found = 0;
+
+  for (const file of files as HuggingFaceTreeEntry[]) {
+    if (
+      !paths.has(String(file.path)) ||
+      typeof file.size !== "number" ||
+      !Number.isFinite(file.size)
+    )
+      continue;
+    total += file.size;
+    found += 1;
   }
-  return Object.keys(output).length ? output : undefined;
+
+  return found === paths.size ? total : undefined;
 }
 
 async function probe(config: InferenceConfig): Promise<BrowserCapability> {
   if (successfulCapability) return successfulCapability;
+  const capability = await probeBrowserCapability();
 
-  const capability: BrowserCapability = {
-    supported: false,
-    secureContext: self.isSecureContext,
-    hasWebgpu: "gpu" in navigator,
-    adapterAcquired: false,
-    deviceAcquired: false,
-    shaderF16: false,
-  };
-  if (!self.isSecureContext) {
-    capability.reason = "WebGPU requires HTTPS or localhost";
-    return capability;
-  }
-  if (!("gpu" in navigator)) {
-    capability.reason = "WebGPU is not available in this browser";
-    return capability;
-  }
+  if (!capability.supported) return capability;
 
-  let estimate: StorageEstimate | undefined;
-  try {
-    estimate = await navigator.storage?.estimate();
-  } catch {
-    estimate = undefined;
-  }
-  if (estimate) {
-    const quota = estimate.quota;
-    const usage = estimate.usage;
-    const available =
-      quota === undefined || usage === undefined ? undefined : Math.max(0, quota - usage);
-    capability.storage = {
-      quota,
-      usage,
-      available,
-      required: Math.ceil(config.model.estimated_download_bytes * 1.15),
-    };
-  }
+  const profile = selectExecutionProfile(capability, config.model.dtype);
 
-  const adapter = await navigator.gpu.requestAdapter({
-    powerPreference: "high-performance",
-  });
-  if (!adapter) {
-    capability.reason = "No WebGPU adapter was returned";
-    return capability;
-  }
-  capability.adapterAcquired = true;
-  capability.shaderF16 = adapter.features.has("shader-f16");
-  capability.limits = recordOfNumbers(adapter.limits);
-  const getInfo = (
-    adapter as GPUAdapter & {
-      requestAdapterInfo?: () => Promise<Record<string, unknown>>;
-    }
-  ).requestAdapterInfo;
-  if (getInfo) capability.adapterInfo = await getInfo.call(adapter).catch(() => undefined);
-  if (!capability.shaderF16) {
-    capability.reason = "The WebGPU adapter does not support shader-f16";
-    return capability;
-  }
+  assertExecutionProfileCompatible(capability, profile);
+  const download = await modelDownloadBytes(config, profile.dtype).catch(() => undefined);
 
-  const requiredBytes = capability.storage?.required;
-  const availableBytes = capability.storage?.available;
-  if (
-    requiredBytes !== undefined &&
-    availableBytes !== undefined &&
-    availableBytes < requiredBytes
-  ) {
-    capability.reason = "Browser storage headroom is below the browser model requirement";
-    return capability;
-  }
-
-  const device = await adapter.requestDevice({
-    requiredFeatures: ["shader-f16"],
-  });
-  capability.deviceAcquired = true;
-  device.destroy();
-  capability.supported = true;
+  if (download !== undefined) capability.storage = { ...capability.storage, download };
   successfulCapability = capability;
+
   return capability;
 }
 
 function configureRuntime(): void {
   const onnx = runtimeBackends()?.onnx;
+
   if (onnx?.wasm) onnx.wasm.proxy = false;
   if (onnx?.webgpu) onnx.webgpu.powerPreference = "high-performance";
   env.allowRemoteModels = true;
@@ -286,8 +278,19 @@ function configureRuntime(): void {
   env.useBrowserCache = true;
 }
 
+export function modelKey(config: InferenceConfig, profile: ExecutionProfile): string {
+  return JSON.stringify({
+    repository: config.model.repository,
+    revision: config.model.revision,
+    profile: profile.id,
+    dtype: profile.dtype,
+    device: profile.device,
+  });
+}
+
 function assertEffectiveProcessorControls(config: InferenceConfig): void {
   const target = requiredProcessor().image_processor;
+
   if (!target) throw new ProcessorConfigurationError("LFM2-VL image processor is unavailable");
 
   const controls = lfm2VlProcessorControls(config);
@@ -302,11 +305,13 @@ function assertEffectiveProcessorControls(config: InferenceConfig): void {
     tileSize,
     encoderPatchSize
   );
+
   if (!Number.isFinite(expectedMaxNumPatches) || expectedMaxNumPatches !== target.max_num_patches) {
     mismatches.push(["max_num_patches", expectedMaxNumPatches]);
   }
   if (mismatches.length) {
     const rendered = mismatches.map(([key, expected]) => `${key}=${String(expected)}`).join(", ");
+
     throw new ProcessorConfigurationError(
       `LFM2-VL processor controls were not applied: ${rendered}`
     );
@@ -317,6 +322,7 @@ function configureProcessorParityControls(config: InferenceConfig): void {
   const activeProcessor = requiredProcessor();
   const currentImageProcessor = activeProcessor.image_processor;
   const currentConfig = asRecord(currentImageProcessor?.config);
+
   if (!currentConfig || !activeProcessor.components) {
     throw new ProcessorConfigurationError(
       "LFM2-VL processor does not expose a reconstructible image processor"
@@ -324,6 +330,7 @@ function configureProcessorParityControls(config: InferenceConfig): void {
   }
 
   const controls = lfm2VlProcessorControls(config);
+
   activeProcessor.components.image_processor = new Lfm2VlImageProcessor({
     ...currentConfig,
     ...controls,
@@ -334,12 +341,14 @@ function configureProcessorParityControls(config: InferenceConfig): void {
 function subscribeToDeviceLoss(): void {
   if (deviceLossSubscribed) return;
   const device = runtimeBackends()?.onnx?.webgpu?.device;
+
   if (!device?.lost) return;
   deviceLossSubscribed = true;
   void device.lost.then((info) => {
-    preparedRevision = null;
+    preparedModelKey = null;
     model = null;
     processor = null;
+    activeExecutionProfile = null;
     successfulCapability = null;
     deviceLossSubscribed = false;
     void deviceLostListener?.(`${info.reason}: ${info.message}`);
@@ -347,39 +356,56 @@ function subscribeToDeviceLoss(): void {
 }
 
 async function prepareModel(id: number, config: InferenceConfig, warmup = true): Promise<void> {
-  if (model && processor && preparedRevision === config.model.revision) return;
   if (preparePromise) return preparePromise;
 
   preparePromise = (async () => {
     configureRuntime();
     const capability = await probe(config);
+
     if (!capability.supported)
       throw new Error(capability.reason ?? "Browser WebGPU inference is unsupported");
+    const profile = selectExecutionProfile(capability, config.model.dtype);
+
+    assertExecutionProfileCompatible(capability, profile);
+    const key = modelKey(config, profile);
+
+    if (model && processor && preparedModelKey === key) return;
     progress(
       id,
       "probe",
-      "WebGPU capability check passed",
+      capability.shaderF16
+        ? "WebGPU with shader-f16 is available."
+        : "WebGPU is available without shader-f16. The model will run on CPU via WASM.",
       4,
-      capability as unknown as Record<string, unknown>
+      {
+        ...capability,
+        execution_profile: profile.id,
+        dtype_profile: profile.dtype,
+        device_profile: profile.device,
+        shaderF16: capability.shaderF16,
+      } as unknown as Record<string, unknown>
     );
     const baseOptions = {
       revision: config.model.revision,
     };
+
     progress(id, "install", "Downloading required model files", 20);
     const [loadedProcessor, loadedModel] = await Promise.all([
       AutoProcessor.from_pretrained(config.model.repository, baseOptions),
       AutoModelForImageTextToText.from_pretrained(config.model.repository, {
         ...baseOptions,
-        device: "webgpu",
-        dtype: config.model.dtype,
+        device: profile.device,
+        dtype: profile.dtype,
       }),
     ]);
+
     processor = loadedProcessor as unknown as RuntimeProcessor;
     model = loadedModel as unknown as RuntimeModel;
     configureProcessorParityControls(config);
-    preparedRevision = config.model.revision;
-    subscribeToDeviceLoss();
-    progress(id, "compile", "Model sessions created", 85);
+    preparedModelKey = key;
+    activeExecutionProfile = profile;
+    if (profileUsesWebGpu(profile)) subscribeToDeviceLoss();
+    progress(id, "compile", "Model loaded", 85);
     if (warmup) await warmupModel(id, config);
     progress(id, "ready", "Browser model is ready", 100);
   })();
@@ -389,7 +415,8 @@ async function prepareModel(id: number, config: InferenceConfig, warmup = true):
   } catch (error) {
     model = null;
     processor = null;
-    preparedRevision = null;
+    preparedModelKey = null;
+    activeExecutionProfile = null;
     successfulCapability = null;
     throw error;
   } finally {
@@ -399,11 +426,13 @@ async function prepareModel(id: number, config: InferenceConfig, warmup = true):
 
 function tensorLastDimension(tensor: unknown): number {
   const dims = asRecord(tensor)?.dims;
+
   return Array.isArray(dims) ? Number(dims.at(-1) ?? 0) : 0;
 }
 
 function tensorData(tensor: unknown): ArrayLike<unknown> {
   const data = asRecord(tensor)?.data;
+
   return isArrayLike(data) ? data : [];
 }
 
@@ -413,14 +442,17 @@ function isSliceableTensor(value: unknown): value is SliceableTensor {
 
 function sliceGenerated(sequences: unknown, inputLength: number): unknown {
   if (!isSliceableTensor(sequences)) throw new Error("Generated sequence is not sliceable");
+
   return sequences.slice(null, [inputLength, null]);
 }
 
 function cleanLabel(text: string): string {
   const firstLine = text.trim().split(/\r?\n/, 1)[0] || "unknown";
   let cleaned = firstLine.toLowerCase().replace(/^[\s"'`]+|[\s"'`]+$/g, "");
+
   cleaned = cleaned.replace(/^(?:the|an|a)\s+/, "").split(/[.!?;:\n]/, 1)[0] ?? "";
   const words = cleaned.match(/[a-z0-9]+(?:[-'][a-z0-9]+)?/g) ?? [];
+
   return words.slice(0, 4).join(" ") || "unknown";
 }
 
@@ -432,8 +464,10 @@ function geometricMeanTokenProbability(tokenLogprobs: readonly unknown[]): {
     .map(Number)
     .filter(Number.isFinite)
     .map((value) => roundTo(value, 6));
+
   if (!logprobs.length) return { probability: null, logprobs };
   const mean = logprobs.reduce((sum, value) => sum + value, 0) / logprobs.length;
+
   return { probability: roundTo(Math.exp(mean), 6), logprobs };
 }
 
@@ -460,12 +494,14 @@ function processorDiagnostics(
       : undefined;
   const ids = tensorData(inputIds);
   let placeholders: number | undefined;
+
   if (imageTokenId !== undefined) {
     placeholders = 0;
     for (let index = 0; index < ids.length; index += 1) {
       if (Number(ids[index]) === Number(imageTokenId)) placeholders += 1;
     }
   }
+
   return {
     prepared_image_dimensions: [prepared.width, prepared.height],
     pixel_tensor_shape: pixelValueRecord?.dims,
@@ -483,6 +519,7 @@ async function processInputs(
   config: InferenceConfig
 ): Promise<ProcessorInputs> {
   const activeProcessor = requiredProcessor();
+
   assertEffectiveProcessorControls(config);
   const messages = [
     {
@@ -497,10 +534,12 @@ async function processInputs(
     add_special_tokens: false,
   });
   const inputLength = tensorLastDimension(inputs?.input_ids);
+
   if (inputLength > config.contextTokens) {
     const imageTokenId = model?.config?.image_token_id;
     const ids = tensorData(inputs.input_ids);
     let imagePlaceholderCount: number | undefined;
+
     if (imageTokenId !== undefined) {
       imagePlaceholderCount = 0;
       for (let index = 0; index < ids.length; index += 1) {
@@ -509,6 +548,7 @@ async function processInputs(
     }
     throw new MultimodalInputBudgetError(inputLength, config.contextTokens, imagePlaceholderCount);
   }
+
   return inputs;
 }
 
@@ -527,6 +567,7 @@ async function generate(
   const activeModel = requiredModel();
   const activeProcessor = requiredProcessor();
   const inputLength = tensorLastDimension(inputs.input_ids);
+
   stoppingCriteria.reset();
   const generated = await activeModel.generate({
     ...inputs,
@@ -552,8 +593,10 @@ async function generate(
   const scoreResult = config.logprobs
     ? geometricMeanTokenProbability(Array.isArray(tokenLogprobs) ? tokenLogprobs : [])
     : { probability: null, logprobs: [] };
+
   if (!rawOutput && tokenIds.length === 0)
     throw new Error("Warm-up/generation produced no finite output");
+
   return {
     rawOutput,
     probability: scoreResult.probability,
@@ -565,16 +608,17 @@ async function generate(
 }
 
 async function warmupModel(id: number, config: InferenceConfig): Promise<void> {
-  progress(id, "warmup", "Running exact-path warm-up inference", 90);
+  progress(id, "warmup", "Warming up the model", 90);
   const width = 32;
   const height = 32;
   const data = new Uint8Array(width * height * 3).fill(127);
   const image = new RawImage(data, width, height, 3);
   const warmupConfig = { ...config, maxOutputTokens: 1, logprobs: false };
   const result = await generate(image, warmupConfig);
-  if (!result.rawOutput && result.outputTokens < 1)
-    throw new Error("Warm-up produced no output token");
+
+  if (result.outputTokens < 1) throw new Error("Warm-up produced no output token");
   const imagePlaceholderCount = Number(result.diagnostics.image_placeholder_count);
+
   if (!Number.isInteger(imagePlaceholderCount) || imagePlaceholderCount !== config.imageTokens) {
     throw new ProcessorConfigurationError(
       `Warm-up expected ${config.imageTokens} image placeholders but prepared ${String(result.diagnostics.image_placeholder_count)}`
@@ -590,6 +634,7 @@ async function warmupModel(id: number, config: InferenceConfig): Promise<void> {
     Number(imageProcessor?.encoder_patch_size),
     Number(imageProcessor?.downsample_factor)
   );
+
   if (observedVisualTokens !== config.imageTokens) {
     throw new ProcessorConfigurationError(
       `Warm-up processed ${String(processedDimensions)} into ${observedVisualTokens} visual tokens; expected ${config.imageTokens}`
@@ -609,9 +654,11 @@ async function decodeImage(
 ): Promise<DecodedImage & { descriptor: ImageDescriptor }> {
   if (bytes.byteLength > config.maxImageBytes) throw new Error("Image is too large");
   const array = new Uint8Array(bytes);
+
   validateImageContainer(array);
   const blob = new Blob([array], { type: descriptor.mimeType });
   let bitmap: ImageBitmap;
+
   try {
     bitmap = await createImageBitmap(blob, { imageOrientation: "from-image" });
   } catch {
@@ -625,9 +672,11 @@ async function decodeImage(
       alpha: true,
       willReadFrequently: true,
     });
+
     if (!context) throw new Error("2D canvas is unavailable");
     context.drawImage(bitmap, 0, 0);
     const rgba = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+
     return { width: bitmap.width, height: bitmap.height, rgba, descriptor };
   } finally {
     bitmap.close();
@@ -636,35 +685,41 @@ async function decodeImage(
 
 async function classifyRequest(request: QueuedClassification): Promise<ClassificationResult> {
   const started = performance.now();
+
   await prepareModel(request.id, request.config, false);
   const source = sources.get(request.imageId);
+
   if (!source) throw new Error("Browser image data is missing; load the image again");
   currentJobId = request.jobId;
-  progress(request.id, "accepted", "Browser classification accepted", 2, {
+  progress(request.id, "accepted", "Starting classification", 2, {
     job_id: request.jobId,
   });
   const preprocessStarted = performance.now();
   const crop = await prepareCrop(source, request.region, request.config);
   const rawImage = await RawImage.fromBlob(crop.blob);
   const preprocessMs = performance.now() - preprocessStarted;
+
   progress(
     request.id,
     "crop",
-    "Selection cropped and masked in the browser",
+    "Preparing the selected region",
     35,
     crop.details as unknown as Record<string, unknown>
   );
-  progress(request.id, "inference", "Running WebGPU inference", 55);
+  progress(request.id, "inference", "Classifying the selected region", 55);
   const inferenceStarted = performance.now();
   const generation = await generate(rawImage, request.config);
   const inferenceMs = performance.now() - inferenceStarted;
+
   if (currentJobId !== request.jobId)
     throw new DOMException("Classification was superseded", "AbortError");
   const totalMs = performance.now() - started;
   const label = cleanLabel(generation.rawOutput);
+
   progress(request.id, "complete", `Completed in browser: ${label}`, 100, {
     totalMs: roundTo(totalMs, 3),
   });
+
   return {
     requestId: crypto.randomUUID(),
     imageId: request.imageId,
@@ -687,14 +742,14 @@ async function classifyRequest(request: QueuedClassification): Promise<Classific
     },
     performance: {
       preprocessMs: roundTo(preprocessMs, 3),
-      webgpuInferenceMs: roundTo(inferenceMs, 3),
+      inferenceMs: roundTo(inferenceMs, 3),
       totalMs: roundTo(totalMs, 3),
       sourceBytes: source.descriptor.bytes,
       encodedJpegBytes: crop.blob.size,
     },
     runtime: {
       engine: "transformers.js",
-      device: "webgpu",
+      device: activeExecutionProfile?.device.embed_tokens ?? "webgpu",
       model: request.config.model.repository,
       revision: request.config.model.revision,
       transformersJsVersion: request.config.model.transformers_js_version,
@@ -719,6 +774,7 @@ async function drainClassification(request: QueuedClassification): Promise<void>
     currentJobId = null;
     activeRequest = null;
     const next = pendingRequest;
+
     pendingRequest = null;
     if (next) void drainClassification(next);
   }
@@ -727,12 +783,13 @@ async function drainClassification(request: QueuedClassification): Promise<void>
 function enqueueClassification(request: QueuedClassification): void {
   if (!activeRequest) {
     void drainClassification(request);
+
     return;
   }
   if (pendingRequest)
     abortQueued(pendingRequest, "Classification was superseded by a newer request");
   pendingRequest = request;
-  progress(request.id, "queued", "Queued behind the active browser generation", 45, {
+  progress(request.id, "queued", "Waiting for the current classification to finish", 45, {
     queued_ahead: 1,
   });
 }
@@ -747,7 +804,8 @@ async function disposeRuntime(): Promise<void> {
   await model?.dispose?.();
   model = null;
   processor = null;
-  preparedRevision = null;
+  preparedModelKey = null;
+  activeExecutionProfile = null;
   preparePromise = null;
   deviceLossSubscribed = false;
   successfulCapability = null;
@@ -759,6 +817,7 @@ const api: WorkerApi = {
   probe,
   async prepare(config, warmup, onProgress) {
     const id = startOperation(onProgress);
+
     try {
       await prepareModel(id, config, warmup);
     } finally {
@@ -768,6 +827,7 @@ const api: WorkerApi = {
   async loadImage(descriptorInput, bytes, config) {
     const descriptor = v.parse(ImageDescriptorSchema, descriptorInput);
     const decoded = await decodeImage(descriptor, bytes, config);
+
     sources.set(descriptor.id, decoded);
   },
   async releaseImage(imageId) {
@@ -779,6 +839,7 @@ const api: WorkerApi = {
       region: v.parse(RegionSchema, requestInput.region),
     };
     const id = startOperation(onProgress);
+
     return new Promise<ClassificationResult>((resolve, reject) => {
       enqueueClassification({ ...request, id, resolve, reject });
     });

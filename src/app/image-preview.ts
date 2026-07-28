@@ -8,6 +8,7 @@ export type PreviewDimensions = Readonly<{
 
 export function previewDimensions(sourceWidth: number, sourceHeight: number): PreviewDimensions {
   const scale = Math.min(1, PREVIEW_MAX_SIDE / sourceWidth, PREVIEW_MAX_SIDE / sourceHeight);
+
   return {
     width: Math.max(1, Math.round(sourceWidth * scale)),
     height: Math.max(1, Math.round(sourceHeight * scale)),
@@ -33,14 +34,17 @@ async function canvasPreview(
   height: number
 ): Promise<ImageBitmap> {
   const canvas = document.createElement("canvas");
+
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d");
+
   if (!context) throw new Error("Unable to create a canvas preview context");
 
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "high";
   context.drawImage(source, 0, 0, width, height);
+
   return createImageBitmap(canvas);
 }
 
@@ -54,6 +58,7 @@ export async function createPreviewBitmap(
   if (scale === 1) {
     try {
       throwIfAborted(signal);
+
       return source;
     } catch (error) {
       closeImageBitmap(source);
@@ -62,6 +67,7 @@ export async function createPreviewBitmap(
   }
 
   let preview: ImageBitmap | null = null;
+
   try {
     throwIfAborted(signal);
     try {
@@ -76,6 +82,7 @@ export async function createPreviewBitmap(
     }
     throwIfAborted(signal);
     closeImageBitmap(source);
+
     return preview;
   } catch (error) {
     closeImageBitmap(preview);

@@ -11,6 +11,10 @@ import {
   Text,
   Title,
 } from "@mantine/core";
+import "@mantine/core/styles/Accordion.layer.css";
+import "@mantine/core/styles/Code.layer.css";
+import "@mantine/core/styles/ScrollArea.layer.css";
+import "@mantine/core/styles/Table.layer.css";
 import { INFERENCE_CONFIG } from "../config";
 import type { BrowserCapability, ProgressEvent } from "../types";
 import type { LatestResult } from "./app.machine";
@@ -26,6 +30,7 @@ type Props = Readonly<{
 
 function JsonBlock({ value }: Readonly<{ value: unknown }>) {
   const text = JSON.stringify(value, null, 2);
+
   return (
     <Stack gap="xs">
       <Group justify="flex-end">
