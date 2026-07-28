@@ -1,48 +1,59 @@
-# LFM2.5-VL selected-region classifier
+# LFM2.5-VL Region Classifier
 
-A static, browser-only selected-region image classifier. Image decoding, cropping, masking, model execution, and result generation run locally through Transformers.js, ONNX Runtime Web, and WebGPU. There is no application backend, inference API, upload session, or remote inference route.
+Classify objects or areas within an image by drawing a crop around them.
+
+Everything runs in the browser with WebGPU: image decoding, cropping, model inference, and result generation. Your images and selected regions are not uploaded to an inference server.
+
+## How it works
+
+1. Open an image.
+2. Draw a box around the area you want to classify.
+3. Run the model.
+4. Review the result and repeat with another region if needed.
+
+The application uses the ONNX version of [LFM2.5-VL-450M](https://huggingface.co/LiquidAI/LFM2.5-VL-450M) published by [ONNX Community](https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX).
 
 ## Requirements
 
-- A current secure-context browser with WebGPU and `shader-f16`
-- Enough browser storage for the selected model profile and runtime cache
-- Node.js 22 or newer and Corepack for development
+You will need:
 
-## Application architecture
+- A browser with WebGPU and `shader-f16` support
+- Enough browser storage for the model files and runtime cache
+- Node.js 22 or newer
+- Corepack
 
-- **React:** component shell and render optimization
-- **Mantine:** layout, controls, drop zone, progress, feedback, responsive behavior, and accessible primitives
-- **XState:** capability, model, image, classification, cancellation, and recovery workflows
-- **Comlink:** typed Web Worker RPC, callback proxies, transferables, and remote errors
-- **Valibot:** runtime validation at manifest and worker boundaries
-- **react-image-crop:** accessible free-form rectangular selection interaction, stored as normalized coordinates
-- **Transformers.js WebGPU adapter:** preserved custom processor, generation, scoring, diagnostics, cancellation, warm-up, and device-loss behavior
+Corepack is included with Node.js 22–24. On newer Node.js releases, you may need to install it separately.
 
-The main thread retains the original `File` and decoded `ImageBitmap`. The worker receives image bytes once, then subsequent classifications send only an image identifier and normalized selection coordinates. An unexpected inference failure permits one worker rebuild and retained-image replay.
+Because inference runs locally, performance depends on your browser, GPU, available memory, and the size of the selected region.
 
-See `docs/browser-inference.md` for the runtime contract and `docs/frontend-rewrite-plan.md` for the migration rationale.
+## Run locally
 
-## Model profile
-
-`model-manifest.json` pins `onnx-community/LFM2.5-VL-450M-ONNX` to commit `3e0c8bb3b2268ffa7b30dba6a3c2d1985d87fb14` with FP16 embeddings, an FP16 vision encoder, and a Q4F16 merged decoder. The verified download total is 576,645,711 bytes.
-
-Every pinned artifact records an exact byte length and SHA-256 value; `integrity_status` is `verified`.
-
-## Development
+Install the dependencies:
 
 ```bash
 corepack enable
 corepack pnpm install
+```
+
+Start the development server:
+
+```bash
 corepack pnpm run dev
 ```
 
-Production validation:
+Open the address printed by Vite.
+
+The first model load can take longer because the browser needs to download and cache the model files.
+
+## Checks
+
+Run the complete project check before submitting a change:
 
 ```bash
 corepack pnpm run check
 ```
 
-Dependency-free checks can run before installation:
+You can also run the repository checks separately:
 
 ```bash
 node scripts/audit-browser-only.mjs
@@ -50,8 +61,53 @@ node scripts/verify-model-manifest.mjs
 node scripts/measure-codebase.mjs
 ```
 
-The production build is a static `dist/` directory. `vite.config.ts` emits relative asset URLs for root or subpath deployment.
+The individual checks verify that the application remains browser-only, validate the pinned model files, and measure the codebase.
 
-## Release requirements
+See [`package.json`](./package.json) for the complete list of commands and dependencies.
 
-A release must pass formatting, lint, type-checking, all Vitest suites, the Vite production build, browser accessibility checks, bundle comparison, and model-manifest verification. Do not mark the model manifest verified until every listed artifact has an exact byte length and SHA-256 value.
+## Production build
+
+Create a production build:
+
+```bash
+corepack pnpm run build
+```
+
+Preview it locally:
+
+```bash
+corepack pnpm run start
+```
+
+The generated static site is written to [`dist/`](./dist/).
+
+Vite is configured to use relative asset paths, so the build can be hosted at either a domain root or a nested path.
+
+## Model configuration
+
+Model configuration is pinned in [`model-manifest.json`](./model-manifest.json), including:
+
+- the Hugging Face revision;
+- ONNX artifacts;
+- runtime options;
+- integrity information.
+
+Update the manifest whenever the model revision or runtime configuration changes.
+
+## Architecture
+
+The inference path uses:
+
+- [Transformers.js](https://huggingface.co/docs/transformers.js/index) for model loading and preprocessing
+- [ONNX Runtime Web](https://onnxruntime.ai/docs/get-started/with-javascript/web.html) for browser inference
+- WebGPU for GPU execution
+
+The interface is built with React and Mantine. XState manages application state, Comlink handles worker communication, Valibot validates data, and `react-image-crop` provides region selection.
+
+For a detailed description of the inference flow, see [`docs/browser-inference.md`](./docs/browser-inference.md).
+
+## Project documentation
+
+- [Browser inference architecture](./docs/browser-inference.md)
+- [Scripts and dependencies](./package.json)
+- [Model manifest](./model-manifest.json)
