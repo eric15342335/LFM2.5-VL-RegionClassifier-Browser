@@ -58,11 +58,11 @@ export function ImageFilePicker({
         }
       }}
       onDragOver={(event) => {
-        if (!disabled) event.preventDefault();
+        event.preventDefault();
       }}
       onDragLeave={(event) => {
         event.preventDefault();
-        setDragActive(false);
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragActive(false);
       }}
       onDrop={(event) => {
         event.preventDefault();

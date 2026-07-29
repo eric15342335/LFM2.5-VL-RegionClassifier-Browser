@@ -106,7 +106,7 @@ export interface InferenceEngine {
   readonly name: string;
   probe(): Promise<BrowserCapability>;
   prepare(onProgress?: (event: ProgressEvent) => void): Promise<void>;
-  loadImage(file: File, descriptor: ImageDescriptor, signal?: AbortSignal): Promise<void>;
+  loadImage(bytes: ArrayBuffer, descriptor: ImageDescriptor): Promise<void>;
   releaseImage(imageId: string): Promise<void>;
   classify(request: ClassifyRequest): Promise<ClassificationResult>;
   cancel(): void;

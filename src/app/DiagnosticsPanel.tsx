@@ -11,10 +11,7 @@ import {
   Text,
   Title,
 } from "@mantine/core";
-import "@mantine/core/styles/Accordion.layer.css";
-import "@mantine/core/styles/Code.layer.css";
-import "@mantine/core/styles/ScrollArea.layer.css";
-import "@mantine/core/styles/Table.layer.css";
+import { useEffect, useState } from "react";
 import { INFERENCE_CONFIG } from "../config";
 import type { BrowserCapability, ProgressEvent } from "../types";
 import type { LatestResult } from "./app.machine";
@@ -60,6 +57,12 @@ export function DiagnosticsPanel({
   technicalError,
   onClearEvents,
 }: Props) {
+  const [openItems, setOpenItems] = useState<string[]>(technicalError ? ["error"] : []);
+
+  useEffect(() => {
+    if (technicalError) setOpenItems((items) => [...new Set([...items, "error"])]);
+  }, [technicalError]);
+
   return (
     <Paper
       withBorder
@@ -76,7 +79,8 @@ export function DiagnosticsPanel({
         <Accordion
           variant="separated"
           multiple
-          defaultValue={technicalError ? ["error"] : []}
+          value={openItems}
+          onChange={setOpenItems}
         >
           {technicalError && (
             <Accordion.Item value="error">

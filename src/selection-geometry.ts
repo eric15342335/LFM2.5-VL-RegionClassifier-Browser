@@ -3,7 +3,7 @@ import type { NormalizedSelection } from "./types";
 
 export const MINIMUM_SELECTION_SPAN = 0.01;
 
-export function clamp(value: number, minimum: number, maximum: number): number {
+function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
 }
 

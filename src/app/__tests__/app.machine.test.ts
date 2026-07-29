@@ -76,9 +76,11 @@ const result: ClassificationResult = {
 class FakeClient implements InferenceClientPort {
   readonly name = "fake";
   loadedImages: string[] = [];
+  releasedImages: string[] = [];
   lifecycleListeners = new Set<InferenceLifecycleListener>();
   capabilityResult = capability;
   classifyImpl: (request: ClassifyRequest) => Promise<ClassificationResult> = async () => result;
+  releaseImageImpl: (imageId: string) => Promise<void> = async () => undefined;
 
   async probe(): Promise<BrowserCapability> {
     return this.capabilityResult;
@@ -94,11 +96,13 @@ class FakeClient implements InferenceClientPort {
     });
   }
 
-  async loadImage(_file: File, image: ImageDescriptor): Promise<void> {
+  async loadImage(_bytes: ArrayBuffer, image: ImageDescriptor): Promise<void> {
     this.loadedImages.push(image.id);
   }
 
   async releaseImage(imageId: string): Promise<void> {
+    this.releasedImages.push(imageId);
+    await this.releaseImageImpl(imageId);
     this.loadedImages = this.loadedImages.filter((id) => id !== imageId);
   }
 
@@ -129,6 +133,7 @@ function decoder(close = vi.fn()): ImageDecoder {
   return async () => ({
     previewBitmap: { width: 640, height: 480, close } as unknown as ImageBitmap,
     descriptor,
+    bytes: new ArrayBuffer(4),
   });
 }
 
@@ -180,6 +185,69 @@ describe("appMachine", () => {
 
     expect(actor.getSnapshot().context.result?.label).toBe("traffic light");
     expect(actor.getSnapshot().context.events.some((event) => event.stage === "ready")).toBe(true);
+    actor.stop();
+  });
+
+  it("releases a newly loaded image when replacing the previous image fails", async () => {
+    const client = new FakeClient();
+    let image = descriptor;
+    const decodeImage = decoder();
+    const actor = createActor(appMachine, {
+      input: {
+        client,
+        decodeImage: async (selectedFile, signal) => ({
+          ...(await decodeImage(selectedFile, signal)),
+          descriptor: image,
+        }),
+      },
+    }).start();
+
+    await waitFor(actor, (snapshot) => snapshot.matches("operational"));
+    actor.send({ type: "FILE_SELECTED", file: file() });
+    await waitFor(actor, (snapshot) => snapshot.hasTag("imageReady"));
+
+    image = { ...descriptor, id: "image-2" };
+    const releaseError = new Error("release failed");
+
+    client.releaseImageImpl = async (imageId) => {
+      if (imageId === descriptor.id) throw releaseError;
+    };
+    actor.send({ type: "FILE_SELECTED", file: file() });
+    await waitFor(actor, (snapshot) => snapshot.hasTag("imageError"));
+
+    expect(client.releasedImages).toEqual([descriptor.id, image.id, descriptor.id]);
+    expect(actor.getSnapshot().context.technicalError).toBe(releaseError.stack);
+    actor.stop();
+  });
+
+  it("releases the previous image without replacing the load error", async () => {
+    const client = new FakeClient();
+    const decodeError = new Error("decode failed");
+    let rejectDecode = false;
+    const actor = createActor(appMachine, {
+      input: {
+        client,
+        decodeImage: async (...args) => {
+          if (rejectDecode) throw decodeError;
+
+          return decoder()(...args);
+        },
+      },
+    }).start();
+
+    await waitFor(actor, (snapshot) => snapshot.matches("operational"));
+    actor.send({ type: "FILE_SELECTED", file: file() });
+    await waitFor(actor, (snapshot) => snapshot.hasTag("imageReady"));
+
+    rejectDecode = true;
+    client.releaseImageImpl = async () => {
+      throw new Error("release failed");
+    };
+    actor.send({ type: "FILE_SELECTED", file: file() });
+    await waitFor(actor, (snapshot) => snapshot.hasTag("imageError"));
+
+    expect(client.releasedImages).toEqual([descriptor.id]);
+    expect(actor.getSnapshot().context.technicalError).toBe(decodeError.stack);
     actor.stop();
   });
 

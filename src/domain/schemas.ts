@@ -21,15 +21,6 @@ export const ImageDescriptorSchema = v.object({
   height: v.pipe(finiteNumber, v.minValue(1)),
 });
 
-export const ProgressEventSchema = v.object({
-  event: v.picklist(["status", "error"]),
-  stage: v.string(),
-  message: v.string(),
-  progress: finiteNumber,
-  elapsedMs: finiteNumber,
-  detail: v.optional(unknownRecord),
-});
-
 const ModelArtifactSchema = v.object({
   role: v.picklist([
     "configuration",

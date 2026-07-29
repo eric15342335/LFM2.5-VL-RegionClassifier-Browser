@@ -31,7 +31,7 @@ export type LatestResult = ClassificationResult & {
 export type ImageDecoder = (
   file: File,
   signal: AbortSignal
-) => Promise<{ previewBitmap: ImageBitmap; descriptor: ImageDescriptor }>;
+) => Promise<LoadedImage & { bytes: ArrayBuffer }>;
 
 export type AppInput = Readonly<{
   client: InferenceClientPort;
@@ -85,20 +85,20 @@ type ClassifyInput = Readonly<{
 
 function errorDetails(error: unknown): string {
   if (error instanceof Error) {
-    return error.stack ? `${error.name}: ${error.message}\n${error.stack}` : error.message;
+    return error.stack || error.message;
   }
 
   return String(error);
 }
 
-async function defaultDecodeImage(
-  file: File,
-  signal: AbortSignal
-): Promise<{ previewBitmap: ImageBitmap; descriptor: ImageDescriptor }> {
+async function defaultDecodeImage(file: File, signal: AbortSignal): ReturnType<ImageDecoder> {
   if (file.size > INFERENCE_CONFIG.maxImageBytes) {
     throw new Error(`Image exceeds ${INFERENCE_CONFIG.maxImageBytes} bytes`);
   }
-  const decodedBitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  const bytes = await file.arrayBuffer();
+  const decodedBitmap = await createImageBitmap(new Blob([bytes], { type: file.type }), {
+    imageOrientation: "from-image",
+  });
   let decodedBitmapOwned = true;
 
   try {
@@ -126,6 +126,7 @@ async function defaultDecodeImage(
         width,
         height,
       },
+      bytes,
     };
   } catch (error) {
     if (decodedBitmapOwned) closeImageBitmap(decodedBitmap);
@@ -149,6 +150,7 @@ const loadImageActor = fromPromise<LoadedImage & { elapsedMs: number }, LoadImag
   async ({ input, signal }) => {
     const started = performance.now();
     let previewBitmap: ImageBitmap | null = null;
+    let loadedImageId: string | null = null;
     const closeUntransferredPreview = () => {
       closeImageBitmap(previewBitmap);
       previewBitmap = null;
@@ -160,19 +162,22 @@ const loadImageActor = fromPromise<LoadedImage & { elapsedMs: number }, LoadImag
       const decoded = await input.decodeImage(input.file, signal);
 
       previewBitmap = decoded.previewBitmap;
-      const { descriptor } = decoded;
+      const { descriptor, bytes } = decoded;
 
       if (signal.aborted) {
         throw signal.reason ?? new DOMException("Image loading cancelled", "AbortError");
       }
-      await input.client.loadImage(input.file, descriptor, signal);
+      await input.client.loadImage(bytes, descriptor);
+      loadedImageId = descriptor.id;
       if (signal.aborted) {
         await input.client.releaseImage(descriptor.id);
+        loadedImageId = null;
         throw signal.reason ?? new DOMException("Image loading cancelled", "AbortError");
       }
       if (input.previous) await input.client.releaseImage(input.previous.descriptor.id);
       if (signal.aborted) {
         await input.client.releaseImage(descriptor.id);
+        loadedImageId = null;
         throw signal.reason ?? new DOMException("Image loading cancelled", "AbortError");
       }
 
@@ -185,9 +190,11 @@ const loadImageActor = fromPromise<LoadedImage & { elapsedMs: number }, LoadImag
       };
 
       previewBitmap = null;
+      loadedImageId = null;
 
       return loadedImage;
     } catch (error) {
+      if (loadedImageId) await input.client.releaseImage(loadedImageId).catch(() => undefined);
       closeUntransferredPreview();
       throw error;
     } finally {
@@ -320,6 +327,10 @@ export const appMachine = setup({
         message: "Image ready. Draw around one object.",
       };
     }),
+    releasePreviousImage: ({ context }) => {
+      if (context.image)
+        void context.client.releaseImage(context.image.descriptor.id).catch(() => undefined);
+    },
     imageFailed: assign({
       image: () => null,
       pendingFile: () => null,
@@ -493,7 +504,11 @@ export const appMachine = setup({
                 },
                 onError: {
                   target: "error",
-                  actions: ["imageFailed", raise({ type: "IMAGE_REPLACED" })],
+                  actions: [
+                    "releasePreviousImage",
+                    "imageFailed",
+                    raise({ type: "IMAGE_REPLACED" }),
+                  ],
                 },
               },
             },

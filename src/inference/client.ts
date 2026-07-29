@@ -29,7 +29,7 @@ export type WorkerConnectionFactory = (
   onDeviceLost: (reason: string) => void
 ) => WorkerConnection;
 
-type RetainedImage = Readonly<{ file: File; descriptor: ImageDescriptor }>;
+type RetainedImage = Readonly<{ bytes: ArrayBuffer; descriptor: ImageDescriptor }>;
 
 const CANCELLATION_GRACE_PERIOD_MS = 1500;
 
@@ -172,16 +172,13 @@ export class BrowserInferenceClient implements InferenceClientPort {
     }
   }
 
-  async loadImage(file: File, descriptor: ImageDescriptor, signal?: AbortSignal): Promise<void> {
-    const bytes = await file.arrayBuffer();
+  async loadImage(bytes: ArrayBuffer, descriptor: ImageDescriptor): Promise<void> {
+    const copy = bytes.slice(0);
 
-    if (signal?.aborted) {
-      throw signal.reason ?? new DOMException("Image loading cancelled", "AbortError");
-    }
     await this.invoke(
-      this.ensureConnection().api.loadImage(descriptor, transfer(bytes, [bytes]), this.config)
+      this.ensureConnection().api.loadImage(descriptor, transfer(copy, [copy]), this.config)
     );
-    this.retainedImages.set(descriptor.id, { file, descriptor });
+    this.retainedImages.set(descriptor.id, { bytes, descriptor });
   }
 
   async releaseImage(imageId: string): Promise<void> {
@@ -246,9 +243,8 @@ export class BrowserInferenceClient implements InferenceClientPort {
     const retained = [...this.retainedImages.values()];
 
     this.hardReset(new Error("Recreating browser inference worker"), false);
-    this.ensureConnection();
     await this.prepare(onProgress);
-    for (const { file, descriptor } of retained) await this.loadImage(file, descriptor);
+    for (const { bytes, descriptor } of retained) await this.loadImage(bytes, descriptor);
   }
 
   async classify(request: ClassifyRequest): Promise<ClassificationResult> {

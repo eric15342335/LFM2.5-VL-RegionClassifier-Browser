@@ -58,11 +58,10 @@ describe("bounded UI image previews", () => {
       drawImage: vi.fn(),
     };
 
-    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
-      configurable: true,
-      writable: true,
-      value: vi.fn(() => context),
-    });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(((contextId: string) =>
+      contextId === "2d"
+        ? (context as unknown as CanvasRenderingContext2D)
+        : null) as HTMLCanvasElement["getContext"]);
     createImageBitmapMock.mockRejectedValueOnce(new TypeError("resize unsupported"));
     createImageBitmapMock.mockResolvedValueOnce(preview);
 

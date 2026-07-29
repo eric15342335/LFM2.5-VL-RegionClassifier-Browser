@@ -10,7 +10,9 @@ describe("model manifest", () => {
   it("pins every model URL to one immutable revision", () => {
     expect(manifest.revision).toMatch(/^[a-f0-9]{40}$/);
     for (const artifact of manifest.artifacts) {
-      expect(artifact.resolved_url).toContain(`/resolve/${manifest.revision}/`);
+      expect(artifact.resolved_url).toBe(
+        `https://huggingface.co/${manifest.repository}/resolve/${manifest.revision}/${artifact.path}`
+      );
     }
   });
 
@@ -51,9 +53,6 @@ describe("model manifest", () => {
       ])
     );
     for (const artifact of q8) {
-      expect(artifact.resolved_url).toBe(
-        `https://huggingface.co/${manifest.repository}/resolve/${manifest.revision}/${artifact.path}`
-      );
       expect(artifact.sha256).toMatch(/^[a-f0-9]{64}$/);
     }
   });

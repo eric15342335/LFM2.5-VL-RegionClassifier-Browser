@@ -103,10 +103,10 @@ describe("browser crop preparation", () => {
       cropPixels: [0, 0, 4, 4],
       cropSizeBeforeResize: [4, 4],
       modelImageSize: [2, 2],
-      selectedAreaPixels: 9,
+      selectedAreaPixels: 4,
       cropAreaPixels: 16,
-      selectedFractionOfSource: 0.5625,
-      selectedFractionOfCrop: 0.5625,
+      selectedFractionOfSource: 0.25,
+      selectedFractionOfCrop: 0.25,
     });
     expect(prepared.blob).toMatchObject({ type: "image/jpeg", size: 4 });
 
@@ -115,8 +115,8 @@ describe("browser crop preparation", () => {
     expect(masked.data).toEqual(
       new Uint8ClampedArray([
         8, 28, 48, 255, 8, 28, 48, 255, 8, 28, 48, 255, 8, 28, 48, 255, 8, 28, 48, 255, 5, 25, 45,
-        255, 6, 26, 46, 255, 7, 27, 47, 255, 8, 28, 48, 255, 9, 29, 49, 255, 10, 30, 50, 255, 11,
-        31, 51, 255, 8, 28, 48, 255, 13, 33, 53, 255, 14, 34, 54, 255, 15, 35, 55, 255,
+        255, 6, 26, 46, 255, 8, 28, 48, 255, 8, 28, 48, 255, 9, 29, 49, 255, 10, 30, 50, 255, 8, 28,
+        48, 255, 8, 28, 48, 255, 8, 28, 48, 255, 8, 28, 48, 255, 8, 28, 48, 255,
       ])
     );
     expect(target?.context.drawImage).toHaveBeenCalledWith(source, 0, 0, 4, 4, 0, 0, 2, 2);

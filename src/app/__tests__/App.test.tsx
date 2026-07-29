@@ -144,17 +144,20 @@ describe("App", () => {
 
   it("loads the file selected through the native picker", async () => {
     const client = new UiClient();
+    const user = userEvent.setup();
     const { container } = renderApp(client);
     const file = new File([new Uint8Array(128)], "sample.png", { type: "image/png" });
 
-    await userEvent.click(await screen.findByRole("button", { name: /load model/i }));
+    file.arrayBuffer = vi.fn(async () => new Uint8Array(128).buffer);
+
+    await user.click(await screen.findByRole("button", { name: /load model/i }));
     await screen.findByText("Model ready");
 
     const picker = container.querySelector('input[type="file"]') as HTMLInputElement;
 
-    fireEvent.change(picker, { target: { files: [file] } });
+    await user.upload(picker, file);
     await waitFor(() => expect(client.loadImage).toHaveBeenCalledTimes(1));
-    fireEvent.change(picker, { target: { files: [file] } });
+    await user.upload(picker, file);
     await waitFor(() => expect(client.loadImage).toHaveBeenCalledTimes(2));
   });
 

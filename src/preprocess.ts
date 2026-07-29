@@ -118,7 +118,7 @@ function isolateSelection(
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      const selected = x >= left && x <= right && y >= top && y <= bottom;
+      const selected = x >= left && x < right && y >= top && y < bottom;
       const index = (y * width + x) * 4;
 
       if (selected) {

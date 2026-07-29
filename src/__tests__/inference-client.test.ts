@@ -107,12 +107,10 @@ describe("Comlink inference client lifecycle", () => {
       };
     };
     const client = new BrowserInferenceClient(INFERENCE_CONFIG, factory);
-    const file = new File([new Uint8Array([1, 2, 3, 4])], descriptor.name, {
-      type: descriptor.mimeType,
-    });
+    const bytes = new Uint8Array([1, 2, 3, 4]).buffer;
 
     await client.prepare();
-    await client.loadImage(file, descriptor);
+    await client.loadImage(bytes, descriptor);
     const output = await client.classify({
       imageId: descriptor.id,
       region: { x1: 0.1, y1: 0.1, x2: 0.9, y2: 0.9 },
@@ -167,13 +165,16 @@ describe("Comlink inference client lifecycle", () => {
 
   it("times out a browser capability check", async () => {
     vi.useFakeTimers();
-    const result = expect(withTimeout(new Promise(() => undefined), 1000)).rejects.toMatchObject({
-      name: "TimeoutError",
-      message: "Browser capability check timed out",
-    });
+    try {
+      const result = expect(withTimeout(new Promise(() => undefined), 1000)).rejects.toMatchObject({
+        name: "TimeoutError",
+        message: "Browser capability check timed out",
+      });
 
-    await vi.advanceTimersByTimeAsync(1000);
-    await result;
-    vi.useRealTimers();
+      await vi.advanceTimersByTimeAsync(1000);
+      await result;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

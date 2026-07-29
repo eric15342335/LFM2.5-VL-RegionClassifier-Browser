@@ -30,7 +30,7 @@ const LazyImageWorkspace = lazy(() =>
   import("./ImageWorkspace").then((module) => ({ default: module.ImageWorkspace }))
 );
 
-type AppNotice = Readonly<{ id: number; title: string; message: string; tone: "error" }>;
+type AppNotice = Readonly<{ title: string; message: string }>;
 
 function RuntimeBadge({
   supported,
@@ -82,7 +82,7 @@ export function App({
   const supported = context.capability?.supported ?? !snapshot.hasTag("unsupported");
   const unsupported = snapshot.hasTag("unsupported");
   const showNotice = useCallback((title: string, message: string) => {
-    setNotice({ id: Date.now(), title, message, tone: "error" });
+    setNotice({ title, message });
   }, []);
 
   useEffect(() => () => void client.dispose(), [client]);

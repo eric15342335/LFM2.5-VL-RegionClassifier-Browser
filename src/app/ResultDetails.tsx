@@ -1,5 +1,4 @@
 import { Paper, Table, Text, Title } from "@mantine/core";
-import "@mantine/core/styles/Table.layer.css";
 import { useEffect, useRef } from "react";
 import type { LatestResult, LoadedImage } from "./app.machine";
 import { formatBytes, formatDuration, formatPercent } from "./format";

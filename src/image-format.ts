@@ -131,10 +131,13 @@ export function imageFrameCount(bytes: Uint8Array): number {
 }
 
 export function validateImageContainer(bytes: Uint8Array): void {
-  const format = detectImageFormat(bytes);
+  const inspector = inspectImageFormat(bytes);
 
-  if (!SUPPORTED_IMAGE_FORMATS.includes(format as (typeof SUPPORTED_IMAGE_FORMATS)[number])) {
+  if (
+    !inspector ||
+    !SUPPORTED_IMAGE_FORMATS.includes(inspector.format as (typeof SUPPORTED_IMAGE_FORMATS)[number])
+  ) {
     throw new Error(`Invalid or unsupported image; use ${SUPPORTED_IMAGE_FORMATS_LABEL}`);
   }
-  if (imageFrameCount(bytes) > 1) throw new Error("Animated images are not supported");
+  if (inspector.frameCount(bytes) > 1) throw new Error("Animated images are not supported");
 }

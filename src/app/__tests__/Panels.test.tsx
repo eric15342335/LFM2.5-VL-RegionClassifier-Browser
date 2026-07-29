@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { MantineProvider } from "@mantine/core";
-import { render, screen } from "@testing-library/react";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ClassificationResult } from "../../types";
 import { DiagnosticsPanel } from "../DiagnosticsPanel";
 import { ResultPanel } from "../ResultPanel";
+
+afterEach(cleanup);
 
 beforeAll(() => {
   class ResizeObserverMock {
@@ -101,7 +103,20 @@ describe("result and diagnostics presentation", () => {
   });
 
   it("keeps raw result and technical diagnostics available without a decorative session badge", () => {
-    render(
+    const { rerender } = render(
+      <MantineProvider>
+        <DiagnosticsPanel
+          capability={null}
+          events={[]}
+          result={result}
+          technicalError={null}
+          onClearEvents={vi.fn()}
+        />
+      </MantineProvider>
+    );
+
+    fireEvent.click(screen.getByText("Raw result"));
+    rerender(
       <MantineProvider>
         <DiagnosticsPanel
           capability={null}
@@ -113,9 +128,13 @@ describe("result and diagnostics presentation", () => {
       </MantineProvider>
     );
 
-    expect(screen.getByText("Technical error")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Technical error" }).getAttribute("aria-expanded")
+    ).toBe("true");
     expect(screen.getByText("Detailed technical error")).toBeTruthy();
-    expect(screen.getByText("Raw result")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Raw result" }).getAttribute("aria-expanded")).toBe(
+      "true"
+    );
     expect(screen.getByText(/"rawOutput": "traffic light"/)).toBeTruthy();
     expect(screen.queryByText("Browser session")).toBeNull();
   });

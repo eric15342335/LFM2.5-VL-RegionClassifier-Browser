@@ -112,6 +112,7 @@ const stoppingCriteria = new InterruptableStoppingCriteria();
 let model: RuntimeModel | null = null;
 let processor: RuntimeProcessor | null = null;
 let preparedModelKey: string | null = null;
+let preparedModelWarmedUp = false;
 let preparePromise: Promise<void> | null = null;
 let currentJobId: number | null = null;
 
@@ -127,7 +128,7 @@ let nextOperationId = 1;
 const requestStartedAt = new Map<number, number>();
 const progressListeners = new Map<number, ProgressListener>();
 let deviceLostListener: DeviceLostListener | undefined;
-let deviceLossSubscribed = false;
+let subscribedDevice: GPUDevice | null = null;
 let successfulCapability: BrowserCapability | null = null;
 let activeExecutionProfile: ExecutionProfile | null = null;
 
@@ -252,20 +253,19 @@ async function modelDownloadBytes(
 }
 
 async function probe(config: InferenceConfig): Promise<BrowserCapability> {
-  if (successfulCapability) return successfulCapability;
-  const capability = await probeBrowserCapability();
+  const capability = successfulCapability ?? (await probeBrowserCapability());
 
   if (!capability.supported) return capability;
 
   const profile = selectExecutionProfile(capability, config.model.dtype);
 
   assertExecutionProfileCompatible(capability, profile);
+  successfulCapability = capability;
   const download = await modelDownloadBytes(config, profile.dtype).catch(() => undefined);
 
-  if (download !== undefined) capability.storage = { ...capability.storage, download };
-  successfulCapability = capability;
-
-  return capability;
+  return download === undefined
+    ? capability
+    : { ...capability, storage: { ...capability.storage, download } };
 }
 
 function configureRuntime(): void {
@@ -339,24 +339,41 @@ function configureProcessorParityControls(config: InferenceConfig): void {
 }
 
 function subscribeToDeviceLoss(): void {
-  if (deviceLossSubscribed) return;
   const device = runtimeBackends()?.onnx?.webgpu?.device;
 
-  if (!device?.lost) return;
-  deviceLossSubscribed = true;
+  if (!device?.lost || subscribedDevice === device) return;
+  subscribedDevice = device;
   void device.lost.then((info) => {
+    if (subscribedDevice !== device || runtimeBackends()?.onnx?.webgpu?.device !== device) return;
     preparedModelKey = null;
+    preparedModelWarmedUp = false;
     model = null;
     processor = null;
     activeExecutionProfile = null;
     successfulCapability = null;
-    deviceLossSubscribed = false;
+    subscribedDevice = null;
     void deviceLostListener?.(`${info.reason}: ${info.message}`);
   });
 }
 
+async function disposeModel(model: RuntimeModel | null): Promise<void> {
+  try {
+    await model?.dispose?.();
+  } catch {
+    // Model cleanup is best-effort.
+  }
+}
+
 async function prepareModel(id: number, config: InferenceConfig, warmup = true): Promise<void> {
-  if (preparePromise) return preparePromise;
+  while (preparePromise) await preparePromise.catch(() => undefined);
+
+  const previousModel = model;
+  const previousProcessor = processor;
+  const previousModelKey = preparedModelKey;
+  const previousModelWarmedUp = preparedModelWarmedUp;
+  const previousExecutionProfile = activeExecutionProfile;
+  const previousCapability = successfulCapability;
+  const loadedModel: { value: RuntimeModel | null } = { value: null };
 
   preparePromise = (async () => {
     configureRuntime();
@@ -369,7 +386,14 @@ async function prepareModel(id: number, config: InferenceConfig, warmup = true):
     assertExecutionProfileCompatible(capability, profile);
     const key = modelKey(config, profile);
 
-    if (model && processor && preparedModelKey === key) return;
+    if (model && processor && preparedModelKey === key) {
+      if (warmup && !preparedModelWarmedUp) {
+        await warmupModel(id, config);
+        preparedModelWarmedUp = true;
+      }
+
+      return;
+    }
     progress(
       id,
       "probe",
@@ -390,7 +414,7 @@ async function prepareModel(id: number, config: InferenceConfig, warmup = true):
     };
 
     progress(id, "install", "Downloading required model files", 20);
-    const [loadedProcessor, loadedModel] = await Promise.all([
+    const [processorResult, modelResult] = await Promise.allSettled([
       AutoProcessor.from_pretrained(config.model.repository, baseOptions),
       AutoModelForImageTextToText.from_pretrained(config.model.repository, {
         ...baseOptions,
@@ -399,29 +423,42 @@ async function prepareModel(id: number, config: InferenceConfig, warmup = true):
       }),
     ]);
 
-    processor = loadedProcessor as unknown as RuntimeProcessor;
-    model = loadedModel as unknown as RuntimeModel;
+    if (modelResult.status === "fulfilled")
+      loadedModel.value = modelResult.value as unknown as RuntimeModel;
+    if (processorResult.status === "rejected") throw processorResult.reason;
+    if (modelResult.status === "rejected") throw modelResult.reason;
+    processor = processorResult.value as unknown as RuntimeProcessor;
+    model = loadedModel.value;
     configureProcessorParityControls(config);
     preparedModelKey = key;
+    preparedModelWarmedUp = false;
     activeExecutionProfile = profile;
     if (profileUsesWebGpu(profile)) subscribeToDeviceLoss();
     progress(id, "compile", "Model loaded", 85);
-    if (warmup) await warmupModel(id, config);
+    if (warmup) {
+      await warmupModel(id, config);
+      preparedModelWarmedUp = true;
+    }
     progress(id, "ready", "Browser model is ready", 100);
   })();
 
   try {
     await preparePromise;
   } catch (error) {
-    model = null;
-    processor = null;
-    preparedModelKey = null;
-    activeExecutionProfile = null;
-    successfulCapability = null;
+    model = previousModel;
+    processor = previousProcessor;
+    preparedModelKey = previousModelKey;
+    preparedModelWarmedUp = previousModelWarmedUp;
+    activeExecutionProfile = previousExecutionProfile;
+    successfulCapability = previousCapability;
+    if (loadedModel.value && loadedModel.value !== previousModel)
+      await disposeModel(loadedModel.value);
     throw error;
   } finally {
     preparePromise = null;
   }
+
+  if (loadedModel.value && loadedModel.value !== previousModel) await disposeModel(previousModel);
 }
 
 function tensorLastDimension(tensor: unknown): number {
@@ -805,9 +842,10 @@ async function disposeRuntime(): Promise<void> {
   model = null;
   processor = null;
   preparedModelKey = null;
+  preparedModelWarmedUp = false;
   activeExecutionProfile = null;
   preparePromise = null;
-  deviceLossSubscribed = false;
+  subscribedDevice = null;
   successfulCapability = null;
   progressListeners.clear();
   requestStartedAt.clear();

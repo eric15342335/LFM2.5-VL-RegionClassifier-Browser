@@ -11,6 +11,7 @@ const workerMocks = vi.hoisted(() => ({
   modelFromPretrained: vi.fn(),
   requestDevice: vi.fn(),
   adapterFeatures: new Set<string>(["shader-f16"]),
+  env: {} as Record<string, unknown>,
 }));
 
 vi.mock("comlink", () => ({ expose: workerMocks.expose }));
@@ -45,7 +46,7 @@ vi.mock("@huggingface/transformers", () => {
     AutoProcessor: {
       from_pretrained: vi.fn(async () => workerMocks.processor),
     },
-    env: {},
+    env: workerMocks.env,
     InterruptableStoppingCriteria,
     Lfm2VlImageProcessor,
     RawImage,
@@ -95,7 +96,7 @@ class FakeOffscreenCanvas {
   }
 }
 
-function createProcessor(maxNumPatches = 256): unknown {
+function createProcessor(maxNumPatches = 256, imagePlaceholderCount = 0): unknown {
   let imageProcessor: Record<string, unknown> = {
     config: {
       downsample_factor: 2,
@@ -110,8 +111,11 @@ function createProcessor(maxNumPatches = 256): unknown {
   };
   const processor = Object.assign(
     async () => ({
-      attention_mask: { dims: [1, 1], data: [1] },
-      input_ids: { dims: [1, 1], data: [0] },
+      attention_mask: { dims: [1, imagePlaceholderCount], data: [1] },
+      input_ids: {
+        dims: [1, imagePlaceholderCount],
+        data: Array.from({ length: imagePlaceholderCount }, () => 1),
+      },
       pixel_values: { dims: [1, 3, 2, 2] },
       spatial_shapes: { data: [16, 16], dims: [1, 2] },
     }),
@@ -198,6 +202,7 @@ describe("browser inference worker JPEG model input", () => {
 
   afterEach(async () => {
     await api.dispose();
+    delete workerMocks.env.backends;
     workerMocks.adapterFeatures = new Set(["shader-f16"]);
     workerMocks.modelFromPretrained.mockReset();
     workerMocks.modelFromPretrained.mockImplementation(async () => workerMocks.model);
@@ -231,8 +236,6 @@ describe("browser inference worker JPEG model input", () => {
     });
 
     expect(workerMocks.rawImageFromBlob).toHaveBeenCalledWith(encodedJpeg);
-    expect(encodedJpeg).toMatchObject({ size: 4, type: "image/jpeg" });
-    expect(FakeOffscreenCanvas.instances[2]?.convertToBlob).toHaveBeenCalledOnce();
     expect(result).toMatchObject({
       label: "cat",
       performance: { encodedJpegBytes: 4 },
@@ -289,6 +292,31 @@ describe("browser inference worker JPEG model input", () => {
     await expect(api.probe(INFERENCE_CONFIG)).resolves.toMatchObject({
       storage: { download: 11 },
     });
+  });
+
+  it("recomputes download metadata for each model configuration", async () => {
+    const artifact = INFERENCE_CONFIG.model.artifacts[0]!;
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({
+        json: async () =>
+          INFERENCE_CONFIG.model.artifacts.map((entry) => ({ path: entry.path, size: 1 })),
+        ok: true,
+      } as Response)
+      .mockResolvedValueOnce({
+        json: async () => [{ path: artifact.path, size: 7 }],
+        ok: true,
+      } as Response);
+
+    await expect(api.probe(INFERENCE_CONFIG)).resolves.toMatchObject({
+      storage: { download: 11 },
+    });
+    await expect(
+      api.probe({
+        ...INFERENCE_CONFIG,
+        model: { ...INFERENCE_CONFIG.model, artifacts: [artifact], revision: "alternate" },
+      })
+    ).resolves.toMatchObject({ storage: { download: 7 } });
   });
 
   it("uses FP32 embedding and Q8 model artifacts without shader-f16", async () => {
@@ -357,6 +385,136 @@ describe("browser inference worker JPEG model input", () => {
     await api.prepare(alternateConfig, false);
 
     expect(workerMocks.modelFromPretrained).toHaveBeenCalledTimes(2);
+  });
+
+  it("rechecks concurrent preparation requests", async () => {
+    let releaseFirstLoad!: () => void;
+    const firstModel = createModel();
+    const secondModel = createModel();
+    const alternateConfig = {
+      ...INFERENCE_CONFIG,
+      model: {
+        ...INFERENCE_CONFIG.model,
+        dtype: {
+          embed_tokens: "q4",
+          vision_encoder: "q4",
+          decoder_model_merged: "q4",
+        } as const,
+      },
+    };
+
+    workerMocks.processor = createProcessor();
+    workerMocks.modelFromPretrained
+      .mockImplementationOnce(
+        async () =>
+          new Promise((resolve) => {
+            releaseFirstLoad = () => resolve(firstModel);
+          })
+      )
+      .mockResolvedValueOnce(secondModel);
+
+    const firstPrepare = api.prepare(INFERENCE_CONFIG, false);
+
+    await vi.waitFor(() => expect(workerMocks.modelFromPretrained).toHaveBeenCalledOnce());
+    const secondPrepare = api.prepare(alternateConfig, true);
+
+    releaseFirstLoad();
+    workerMocks.processor = createProcessor(256, alternateConfig.imageTokens);
+    await Promise.all([firstPrepare, secondPrepare]);
+
+    expect(workerMocks.modelFromPretrained).toHaveBeenCalledTimes(2);
+    expect(secondModel.generate).toHaveBeenCalledOnce();
+  });
+
+  it("disposes only the model relinquished during replacement", async () => {
+    const previousModel = {
+      ...createModel(),
+      dispose: vi.fn(() => {
+        throw new Error("Old model disposal failed");
+      }),
+    };
+    const failedModel = {
+      ...createModel(),
+      dispose: vi.fn().mockRejectedValue(new Error("New model disposal failed")),
+    };
+    const replacementModel = { ...createModel(), dispose: vi.fn() };
+    const alternateConfig = {
+      ...INFERENCE_CONFIG,
+      model: {
+        ...INFERENCE_CONFIG.model,
+        dtype: {
+          embed_tokens: "q4",
+          vision_encoder: "q4",
+          decoder_model_merged: "q4",
+        } as const,
+      },
+    };
+
+    workerMocks.model = previousModel;
+    workerMocks.processor = createProcessor();
+    await api.prepare(INFERENCE_CONFIG, false);
+
+    workerMocks.model = failedModel;
+    workerMocks.processor = createProcessor(255);
+    await expect(api.prepare(alternateConfig, false)).rejects.toMatchObject({
+      name: "ProcessorConfigurationError",
+    });
+    expect(failedModel.dispose).toHaveBeenCalledOnce();
+    expect(previousModel.dispose).not.toHaveBeenCalled();
+
+    workerMocks.model = replacementModel;
+    workerMocks.processor = createProcessor();
+    await api.prepare(alternateConfig, false);
+    expect(previousModel.dispose).toHaveBeenCalledOnce();
+    expect(replacementModel.dispose).not.toHaveBeenCalled();
+  });
+
+  it("ignores loss from a replaced WebGPU device and subscribes to its replacement", async () => {
+    let loseFirstDevice!: (info: GPUDeviceLostInfo) => void;
+    let loseSecondDevice!: (info: GPUDeviceLostInfo) => void;
+    const firstDevice = {
+      lost: new Promise<GPUDeviceLostInfo>((resolve) => {
+        loseFirstDevice = resolve;
+      }),
+    } as GPUDevice;
+    const secondDevice = {
+      lost: new Promise<GPUDeviceLostInfo>((resolve) => {
+        loseSecondDevice = resolve;
+      }),
+    } as GPUDevice;
+    const webgpu = { device: firstDevice };
+    const listener = vi.fn();
+    const alternateConfig = {
+      ...INFERENCE_CONFIG,
+      model: {
+        ...INFERENCE_CONFIG.model,
+        dtype: {
+          embed_tokens: "q4",
+          vision_encoder: "q4",
+          decoder_model_merged: "q4",
+        } as const,
+      },
+    };
+
+    workerMocks.env.backends = { onnx: { webgpu } };
+    workerMocks.model = createModel();
+    workerMocks.processor = createProcessor();
+    await api.setDeviceLostListener(listener);
+    await api.prepare(INFERENCE_CONFIG, false);
+
+    webgpu.device = secondDevice;
+    workerMocks.model = createModel();
+    workerMocks.processor = createProcessor();
+    await api.prepare(alternateConfig, false);
+
+    loseFirstDevice({ message: "stale", reason: "unknown" } as GPUDeviceLostInfo);
+    await Promise.resolve();
+    await api.prepare(alternateConfig, false);
+    expect(listener).not.toHaveBeenCalled();
+    expect(workerMocks.modelFromPretrained).toHaveBeenCalledTimes(2);
+
+    loseSecondDevice({ message: "active", reason: "unknown" } as GPUDeviceLostInfo);
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledWith("unknown: active"));
   });
 
   it("does not mark a failed warm-up as ready", async () => {

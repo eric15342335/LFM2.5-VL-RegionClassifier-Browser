@@ -13,7 +13,7 @@ import type { LoadedImage } from "./app.machine";
 import { formatBytes } from "./format";
 
 type Props = Readonly<{
-  image: LoadedImage | null;
+  image: LoadedImage;
   selection: NormalizedSelection | null;
   disabled: boolean;
   coordinatesOpen: boolean;
@@ -60,14 +60,6 @@ export function ImageWorkspace({
 
     if (!context) return;
 
-    if (!image) {
-      canvas.width = 1;
-      canvas.height = 1;
-      context.clearRect(0, 0, 1, 1);
-
-      return;
-    }
-
     const width = image.previewBitmap.width;
     const height = image.previewBitmap.height;
 
@@ -80,7 +72,7 @@ export function ImageWorkspace({
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
 
-    if (!canvas || !image) {
+    if (!canvas) {
       setRenderedCanvasSize({ width: 0, height: 0 });
 
       return;
@@ -212,61 +204,39 @@ export function ImageWorkspace({
             size="sm"
             c="dimmed"
           >
-            {image
-              ? `${image.descriptor.name} · ${image.descriptor.width} × ${image.descriptor.height} · ${formatBytes(image.descriptor.bytes)}`
-              : "Choose a JPEG, PNG, or WebP image. Processing stays in this browser."}
+            {`${image.descriptor.name} · ${image.descriptor.width} × ${image.descriptor.height} · ${formatBytes(image.descriptor.bytes)}`}
           </Text>
         </Box>
 
-        <Box
-          className="image-canvas-shell"
-          data-empty={!image}
-        >
-          {image && (
-            <ReactCrop
-              crop={crop}
-              disabled={disabled}
-              keepSelection
-              minWidth={renderedCanvasSize.width * MINIMUM_SELECTION_SPAN}
-              minHeight={renderedCanvasSize.height * MINIMUM_SELECTION_SPAN}
-              ariaLabels={{
-                cropArea: "Rectangular image selection",
-                nwDragHandle: "Resize selection from top left",
-                nDragHandle: "Resize selection from top",
-                neDragHandle: "Resize selection from top right",
-                eDragHandle: "Resize selection from right",
-                seDragHandle: "Resize selection from bottom right",
-                sDragHandle: "Resize selection from bottom",
-                swDragHandle: "Resize selection from bottom left",
-                wDragHandle: "Resize selection from left",
-              }}
-              onChange={(_, percentCrop) => updateCrop(percentCrop)}
-              onComplete={(_, percentCrop) => commitCrop(percentCrop)}
-              onDragStart={beginCropDrag}
-              onDragEnd={finishCropDrag}
-            >
-              <canvas
-                ref={canvasRef}
-                className="image-canvas"
-                aria-label="Image selection workspace"
-              />
-            </ReactCrop>
-          )}
-          {!image && (
-            <Stack
-              className="image-placeholder"
-              gap={4}
-              align="center"
-            >
-              <Text fw={600}>No image loaded</Text>
-              <Text
-                size="sm"
-                c="dimmed"
-              >
-                Use the image drop zone above.
-              </Text>
-            </Stack>
-          )}
+        <Box className="image-canvas-shell">
+          <ReactCrop
+            crop={crop}
+            disabled={disabled}
+            keepSelection
+            minWidth={renderedCanvasSize.width * MINIMUM_SELECTION_SPAN}
+            minHeight={renderedCanvasSize.height * MINIMUM_SELECTION_SPAN}
+            ariaLabels={{
+              cropArea: "Rectangular image selection",
+              nwDragHandle: "Resize selection from top left",
+              nDragHandle: "Resize selection from top",
+              neDragHandle: "Resize selection from top right",
+              eDragHandle: "Resize selection from right",
+              seDragHandle: "Resize selection from bottom right",
+              sDragHandle: "Resize selection from bottom",
+              swDragHandle: "Resize selection from bottom left",
+              wDragHandle: "Resize selection from left",
+            }}
+            onChange={(_, percentCrop) => updateCrop(percentCrop)}
+            onComplete={(_, percentCrop) => commitCrop(percentCrop)}
+            onDragStart={beginCropDrag}
+            onDragEnd={finishCropDrag}
+          >
+            <canvas
+              ref={canvasRef}
+              className="image-canvas"
+              aria-label="Image selection workspace"
+            />
+          </ReactCrop>
         </Box>
 
         <Group justify="space-between">
@@ -308,7 +278,7 @@ export function ImageWorkspace({
                     max={100}
                     step={0.01}
                     value={coordinates[key]}
-                    disabled={!image || disabled}
+                    disabled={disabled}
                     aria-label={`${key.toUpperCase()} %`}
                     onChange={(event) => updateCoordinate(key, event.currentTarget.value)}
                   />
@@ -321,7 +291,7 @@ export function ImageWorkspace({
             >
               <Button
                 size="sm"
-                disabled={!image || disabled}
+                disabled={disabled}
                 onClick={applyCoordinates}
               >
                 Apply selection
