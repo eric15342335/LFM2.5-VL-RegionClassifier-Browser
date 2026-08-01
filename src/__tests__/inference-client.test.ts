@@ -2,8 +2,21 @@ import { describe, expect, it, vi } from "vitest";
 import { INFERENCE_CONFIG } from "../config";
 import { withTimeout } from "../inference/capability";
 import { BrowserInferenceClient, type WorkerConnectionFactory } from "../inference/client";
+import { selectExecutionProfile } from "../inference/execution-profile";
 import type { WorkerApi } from "../inference/worker-api";
 import type { ClassificationResult, ImageDescriptor } from "../types";
+
+const profile = selectExecutionProfile(
+  {
+    supported: true,
+    secureContext: true,
+    hasWebgpu: true,
+    adapterAcquired: true,
+    deviceAcquired: true,
+    shaderF16: true,
+  },
+  INFERENCE_CONFIG.model.dtype
+);
 
 const descriptor: ImageDescriptor = {
   id: "image-1",
@@ -84,8 +97,9 @@ function baseApi(overrides: Partial<WorkerApi> = {}): WorkerApi {
 }
 
 describe("Comlink inference client lifecycle", () => {
-  it("rebuilds once and replays retained images after a classification failure", async () => {
+  it("rebuilds once and replays retained images with the same profile", async () => {
     const replayed: string[] = [];
+    const preparedProfiles: string[] = [];
     const progress: string[] = [];
     let connection = 0;
     const factory: WorkerConnectionFactory = () => {
@@ -94,6 +108,9 @@ describe("Comlink inference client lifecycle", () => {
 
       return {
         api: baseApi({
+          prepare: async (_config, _warmup, _onProgress, selectedProfile) => {
+            preparedProfiles.push(selectedProfile?.id ?? "missing");
+          },
           loadImage: async (image) => {
             replayed.push(`${current}:${image.id}`);
           },
@@ -109,7 +126,7 @@ describe("Comlink inference client lifecycle", () => {
     const client = new BrowserInferenceClient(INFERENCE_CONFIG, factory);
     const bytes = new Uint8Array([1, 2, 3, 4]).buffer;
 
-    await client.prepare();
+    await client.prepare(profile);
     await client.loadImage(bytes, descriptor);
     const output = await client.classify({
       imageId: descriptor.id,
@@ -120,6 +137,7 @@ describe("Comlink inference client lifecycle", () => {
     expect(output.label).toBe("dog");
     expect(connection).toBe(2);
     expect(replayed).toEqual(["1:image-1", "2:image-1"]);
+    expect(preparedProfiles).toEqual([profile.id, profile.id]);
     expect(progress).toContain("recovery");
   });
 
@@ -141,7 +159,7 @@ describe("Comlink inference client lifecycle", () => {
     const client = new BrowserInferenceClient(INFERENCE_CONFIG, factory);
     const controller = new AbortController();
 
-    await client.prepare();
+    await client.prepare(profile);
 
     const operation = client.classify({
       imageId: descriptor.id,

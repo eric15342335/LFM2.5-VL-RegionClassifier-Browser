@@ -15,7 +15,7 @@ import {
   Title,
 } from "@mantine/core";
 import { useMachine } from "@xstate/react";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { INFERENCE_CONFIG } from "../config";
 import { SUPPORTED_IMAGE_FORMATS_LABEL } from "../image-format";
 import { BrowserInferenceClient, type InferenceClientPort } from "../inference/client";
@@ -24,11 +24,9 @@ import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { formatBytes, formatDuration, formatModelSize } from "./format";
 import { closeImageBitmap } from "./image-preview";
 import { EmptyImageWorkspace, ImageFilePicker } from "./ImageFilePicker";
+import { ImageWorkspace } from "./ImageWorkspace";
+import { ModelExecutionSelects } from "./ModelExecutionSelects";
 import { ResultPanel } from "./ResultPanel";
-
-const LazyImageWorkspace = lazy(() =>
-  import("./ImageWorkspace").then((module) => ({ default: module.ImageWorkspace }))
-);
 
 type AppNotice = Readonly<{ title: string; message: string }>;
 
@@ -148,8 +146,6 @@ export function App({
       "Image rejected",
       "Use a static JPEG, PNG, or WebP within the configured size limit."
     );
-  const preloadImageWorkspace = () => void import("./ImageWorkspace");
-
   const runPrimaryAction = () => {
     if (action.intent === "load-model") send({ type: "LOAD_MODEL" });
     if (action.intent === "choose-image") dropzoneOpenRef.current?.();
@@ -220,13 +216,26 @@ export function App({
               radius="lg"
               p="md"
             >
-              <Grid align="center">
+              {context.capability?.supported ? (
+                <ModelExecutionSelects
+                  manifest={INFERENCE_CONFIG.model}
+                  capability={context.capability}
+                  profile={context.executionProfile}
+                  disabled={busy}
+                  onChange={(profile) =>
+                    send({ type: "EXECUTION_PROFILE_CHANGED", profile })
+                  }
+                />
+              ) : null}
+              <Grid
+                align="center"
+                mt={context.capability?.supported ? "md" : undefined}
+              >
                 <Grid.Col span={{ base: 12, md: 7 }}>
                   <ImageFilePicker
                     openRef={dropzoneOpenRef}
                     onAccept={acceptFile}
                     onReject={rejectFile}
-                    onIntent={preloadImageWorkspace}
                     maxSize={INFERENCE_CONFIG.maxImageBytes}
                     disabled={busy}
                   >
@@ -309,21 +318,19 @@ export function App({
             >
               <Grid.Col span={{ base: 12, lg: 8 }}>
                 {context.image ? (
-                  <Suspense fallback={<EmptyImageWorkspace />}>
-                    <LazyImageWorkspace
-                      image={context.image}
-                      selection={context.selection}
-                      disabled={busy}
-                      coordinatesOpen={coordinatesOpen}
-                      onCoordinatesOpenChange={setCoordinatesOpen}
-                      onSelectionChange={(selection) =>
-                        send({ type: "SELECTION_CHANGED", selection })
-                      }
-                      onSelectionComplete={(selection) =>
-                        send({ type: "SELECTION_COMPLETED", selection })
-                      }
-                    />
-                  </Suspense>
+                  <ImageWorkspace
+                    image={context.image}
+                    selection={context.selection}
+                    disabled={busy}
+                    coordinatesOpen={coordinatesOpen}
+                    onCoordinatesOpenChange={setCoordinatesOpen}
+                    onSelectionChange={(selection) =>
+                      send({ type: "SELECTION_CHANGED", selection })
+                    }
+                    onSelectionComplete={(selection) =>
+                      send({ type: "SELECTION_COMPLETED", selection })
+                    }
+                  />
                 ) : (
                   <EmptyImageWorkspace />
                 )}

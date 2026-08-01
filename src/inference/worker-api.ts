@@ -1,3 +1,4 @@
+import type { ExecutionProfile } from "./execution-profile";
 import type {
   BrowserCapability,
   ClassificationResult,
@@ -19,7 +20,12 @@ export type WorkerClassifyRequest = Readonly<{
 
 export interface WorkerApi {
   probe(config: InferenceConfig): Promise<BrowserCapability>;
-  prepare(config: InferenceConfig, warmup: boolean, onProgress?: ProgressListener): Promise<void>;
+  prepare(
+    config: InferenceConfig,
+    warmup: boolean,
+    onProgress?: ProgressListener,
+    profile?: ExecutionProfile
+  ): Promise<void>;
   loadImage(
     descriptor: ImageDescriptor,
     bytes: ArrayBuffer,

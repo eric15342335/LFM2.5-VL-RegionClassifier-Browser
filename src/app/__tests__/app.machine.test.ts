@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { createActor, waitFor } from "xstate";
 import type { InferenceClientPort, InferenceLifecycleListener } from "../../inference/client";
+import {
+  updateExecutionProfile,
+  type ExecutionProfile,
+} from "../../inference/execution-profile";
 import type {
   BrowserCapability,
   ClassificationResult,
@@ -77,6 +81,7 @@ class FakeClient implements InferenceClientPort {
   readonly name = "fake";
   loadedImages: string[] = [];
   releasedImages: string[] = [];
+  preparedProfiles: ExecutionProfile[] = [];
   lifecycleListeners = new Set<InferenceLifecycleListener>();
   capabilityResult = capability;
   classifyImpl: (request: ClassifyRequest) => Promise<ClassificationResult> = async () => result;
@@ -86,7 +91,11 @@ class FakeClient implements InferenceClientPort {
     return this.capabilityResult;
   }
 
-  async prepare(onProgress?: (event: ProgressEvent) => void): Promise<void> {
+  async prepare(
+    profile: ExecutionProfile,
+    onProgress?: (event: ProgressEvent) => void
+  ): Promise<void> {
+    this.preparedProfiles.push(profile);
     onProgress?.({
       event: "status",
       stage: "ready",
@@ -146,15 +155,51 @@ async function startOperational(client = new FakeClient()) {
 }
 
 describe("appMachine", () => {
-  it("explains the Q8 WASM fallback when shader-f16 is unavailable", async () => {
+  it("selects a compatible Q4 WebGPU profile when shader-f16 is unavailable", async () => {
     const client = new FakeClient();
 
     client.capabilityResult = { ...capability, shaderF16: false };
     const { actor } = await startOperational(client);
 
     expect(actor.getSnapshot().context.message).toBe(
-      "WebGPU is available without shader-f16. The model will run on CPU via WASM."
+      "WebGPU is available without shader-f16. Compatible choices remain available."
     );
+    expect(actor.getSnapshot().context.executionProfile).toMatchObject({
+      dtype: { embed_tokens: "q4", vision_encoder: "q4", decoder_model_merged: "q4" },
+      device: {
+        embed_tokens: "webgpu",
+        vision_encoder: "webgpu",
+        decoder_model_merged: "webgpu",
+      },
+    });
+    actor.stop();
+  });
+
+  it("invalidates a ready model and prepares the selected execution settings", async () => {
+    const { actor, client } = await startOperational();
+    const initialProfile = actor.getSnapshot().context.executionProfile;
+
+    actor.send({ type: "LOAD_MODEL" });
+    await waitFor(actor, (snapshot) => snapshot.hasTag("modelReady"));
+
+    const profile = updateExecutionProfile(
+      actor.getSnapshot().context.executionProfile,
+      "vision_encoder",
+      { dtype: "q8", device: "wasm" }
+    );
+
+    actor.send({ type: "EXECUTION_PROFILE_CHANGED", profile });
+
+    expect(actor.getSnapshot().hasTag("modelRequired")).toBe(true);
+    expect(actor.getSnapshot().context.message).toContain("Execution settings changed");
+
+    actor.send({ type: "LOAD_MODEL" });
+    await waitFor(actor, (snapshot) => snapshot.hasTag("modelReady"));
+
+    expect(client.preparedProfiles.map((prepared) => prepared.id)).toEqual([
+      initialProfile.id,
+      profile.id,
+    ]);
     actor.stop();
   });
 

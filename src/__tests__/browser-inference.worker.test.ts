@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { INFERENCE_CONFIG } from "../config";
+import { createExecutionProfile } from "../inference/execution-profile";
 import type { WorkerApi } from "../inference/worker-api";
 import type { ImageDescriptor } from "../types";
 
@@ -256,7 +257,7 @@ describe("browser inference worker JPEG model input", () => {
     });
   });
 
-  it("uses FP32 embeddings and Q8 WASM without shader-f16", async () => {
+  it("uses plain Q4 WebGPU without shader-f16", async () => {
     workerMocks.adapterFeatures = new Set();
     workerMocks.model = createModel();
     workerMocks.processor = createProcessor();
@@ -272,74 +273,39 @@ describe("browser inference worker JPEG model input", () => {
       INFERENCE_CONFIG.model.repository,
       expect.objectContaining({
         device: {
-          embed_tokens: "wasm",
-          vision_encoder: "wasm",
-          decoder_model_merged: "wasm",
+          embed_tokens: "webgpu",
+          vision_encoder: "webgpu",
+          decoder_model_merged: "webgpu",
         },
-        dtype: { embed_tokens: "fp32", vision_encoder: "q8", decoder_model_merged: "q8" },
+        dtype: { embed_tokens: "q4", vision_encoder: "q4", decoder_model_merged: "q4" },
       })
     );
   });
 
-  it("supports WebGPU when browser quota metadata is unavailable", async () => {
+  it("probes WebGPU without requesting remote model metadata", async () => {
     vi.mocked(navigator.storage.estimate).mockRejectedValueOnce(new Error("unavailable"));
-    vi.mocked(fetch).mockResolvedValueOnce({
-      json: async () =>
-        INFERENCE_CONFIG.model.artifacts.map((artifact) => ({ path: artifact.path, size: 1 })),
-      ok: true,
-    } as Response);
+    vi.mocked(fetch).mockClear();
 
     await expect(api.probe(INFERENCE_CONFIG)).resolves.toMatchObject({
-      storage: { download: 11 },
+      supported: true,
     });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("recomputes download metadata for each model configuration", async () => {
-    const artifact = INFERENCE_CONFIG.model.artifacts[0]!;
-
-    vi.mocked(fetch)
-      .mockResolvedValueOnce({
-        json: async () =>
-          INFERENCE_CONFIG.model.artifacts.map((entry) => ({ path: entry.path, size: 1 })),
-        ok: true,
-      } as Response)
-      .mockResolvedValueOnce({
-        json: async () => [{ path: artifact.path, size: 7 }],
-        ok: true,
-      } as Response);
-
-    await expect(api.probe(INFERENCE_CONFIG)).resolves.toMatchObject({
-      storage: { download: 11 },
-    });
-    await expect(
-      api.probe({
-        ...INFERENCE_CONFIG,
-        model: { ...INFERENCE_CONFIG.model, artifacts: [artifact], revision: "alternate" },
-      })
-    ).resolves.toMatchObject({ storage: { download: 7 } });
-  });
-
-  it("uses FP32 embedding and Q8 model artifacts without shader-f16", async () => {
-    workerMocks.adapterFeatures = new Set();
-    const selected = INFERENCE_CONFIG.model.artifacts.filter(
-      (artifact) =>
-        artifact.role !== "license" &&
-        (!artifact.dtype || artifact.dtype === (artifact.role === "embedding" ? "fp32" : "q8"))
+  it("passes a selected mixed CPU and WebGPU profile to Transformers.js", async () => {
+    workerMocks.model = createModel();
+    workerMocks.processor = createProcessor();
+    const profile = createExecutionProfile(
+      { embed_tokens: "q4", vision_encoder: "q8", decoder_model_merged: "q4" },
+      { embed_tokens: "webgpu", vision_encoder: "wasm", decoder_model_merged: "webgpu" }
     );
 
-    vi.mocked(fetch).mockResolvedValueOnce({
-      json: async () => [
-        ...selected.map((artifact, index) => ({ path: artifact.path, size: index + 1 })),
-        { path: "onnx/embed_tokens_fp16.onnx", size: 1000 },
-        { path: "onnx/embed_tokens_quantized.onnx", size: 1000 },
-        { path: "LICENSE", size: 1000 },
-      ],
-      ok: true,
-    } as Response);
+    await api.prepare(INFERENCE_CONFIG, false, undefined, profile);
 
-    await expect(api.probe(INFERENCE_CONFIG)).resolves.toMatchObject({
-      storage: { download: (selected.length * (selected.length + 1)) / 2 },
-    });
+    expect(workerMocks.modelFromPretrained).toHaveBeenCalledWith(
+      INFERENCE_CONFIG.model.repository,
+      expect.objectContaining({ device: profile.device, dtype: profile.dtype })
+    );
   });
 
   it("preserves the configured profile and WebGPU placement when shader-f16 is supported", async () => {

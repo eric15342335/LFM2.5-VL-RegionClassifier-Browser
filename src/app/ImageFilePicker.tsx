@@ -8,7 +8,6 @@ type ImageFilePickerProps = Readonly<{
   openRef: MutableRefObject<(() => void) | null>;
   onAccept: (file: File) => void;
   onReject: () => void;
-  onIntent?: () => void;
   children: ReactNode;
 }>;
 
@@ -29,7 +28,6 @@ export function ImageFilePicker({
   openRef,
   onAccept,
   onReject,
-  onIntent,
   children,
 }: ImageFilePickerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -54,7 +52,6 @@ export function ImageFilePicker({
         event.preventDefault();
         if (!disabled) {
           setDragActive(true);
-          onIntent?.();
         }
       }}
       onDragOver={(event) => {
@@ -88,8 +85,6 @@ export function ImageFilePicker({
         <Button
           variant="light"
           disabled={disabled}
-          onFocus={onIntent}
-          onPointerEnter={onIntent}
           onClick={() => openRef.current?.()}
         >
           Browse

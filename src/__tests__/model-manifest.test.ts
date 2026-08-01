@@ -34,6 +34,21 @@ describe("model manifest", () => {
     expect(q4Paths).toHaveLength(6);
   });
 
+  it.each(["fp32", "fp16", "q4", "q4f16", "q8"] as const)(
+    "pins all six %s session artifacts",
+    (dtype) => {
+      const artifacts = manifest.artifacts.filter((artifact) => artifact.dtype === dtype);
+
+      expect(artifacts).toHaveLength(6);
+      expect(new Set(artifacts.map((artifact) => artifact.role))).toEqual(
+        new Set(["embedding", "vision", "decoder"])
+      );
+      for (const artifact of artifacts) {
+        expect(artifact.sha256).toMatch(/^[a-f0-9]{64}$/);
+      }
+    }
+  );
+
   it("keeps the declared runtime version consistent", () => {
     expect(manifest.transformers_js_version).toBe(transformerVersion);
   });

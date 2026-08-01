@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { InferenceClientPort } from "../../inference/client";
+import type { ExecutionProfile } from "../../inference/execution-profile";
 import type { BrowserCapability, ClassificationResult, ProgressEvent } from "../../types";
 import { App } from "../App";
 
@@ -49,9 +50,17 @@ afterEach(cleanup);
 
 class UiClient implements InferenceClientPort {
   readonly name = "ui-test";
-  prepare = vi.fn(async (progress?: (event: ProgressEvent) => void) => {
-    progress?.({ event: "status", stage: "ready", message: "Ready", progress: 100, elapsedMs: 1 });
-  });
+  prepare = vi.fn(
+    async (_profile: ExecutionProfile, progress?: (event: ProgressEvent) => void) => {
+      progress?.({
+        event: "status",
+        stage: "ready",
+        message: "Ready",
+        progress: 100,
+        elapsedMs: 1,
+      });
+    }
+  );
   probe = vi.fn(async (): Promise<BrowserCapability> => ({
     supported: true,
     secureContext: true,
@@ -84,8 +93,11 @@ describe("App", () => {
 
     renderApp(client);
 
-    const loadButton = await screen.findByRole("button", { name: /load model/i });
+    const loadButton = await screen.findByRole("button", { name: /load selected model/i });
 
+    expect(screen.getByRole("combobox", { name: /vision encoder/i })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: /text decoder/i })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: /token embeddings/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /browse/i }).hasAttribute("disabled")).toBe(false);
     expect(screen.getAllByText(/webgpu.*is available/i)).not.toHaveLength(0);
 
@@ -108,7 +120,9 @@ describe("App", () => {
     });
     renderApp(client);
 
-    expect(await screen.findByRole("button", { name: "Load model (1234 MB)" })).toBeTruthy();
+    expect(
+      await screen.findByRole("button", { name: "Load selected model (1234 MB)" })
+    ).toBeTruthy();
     expect(screen.queryByText("size unknown", { exact: false })).toBeNull();
     expect(screen.queryByText("0 ms", { exact: true })).toBeNull();
   });
@@ -124,7 +138,7 @@ describe("App", () => {
     const client = new UiClient();
     const { container } = renderApp(client);
 
-    await userEvent.click(await screen.findByRole("button", { name: /load model/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /load selected model/i }));
     await screen.findByText("Model ready");
 
     const inputs = container.querySelectorAll('input[type="file"]');
@@ -150,7 +164,7 @@ describe("App", () => {
 
     file.arrayBuffer = vi.fn(async () => new Uint8Array(128).buffer);
 
-    await user.click(await screen.findByRole("button", { name: /load model/i }));
+    await user.click(await screen.findByRole("button", { name: /load selected model/i }));
     await screen.findByText("Model ready");
 
     const picker = container.querySelector('input[type="file"]') as HTMLInputElement;
@@ -173,7 +187,7 @@ describe("App", () => {
     );
     const { container } = renderApp(client);
 
-    await userEvent.click(await screen.findByRole("button", { name: /load model/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /load selected model/i }));
     const browse = screen.getByRole("button", { name: "Browse" });
 
     await waitFor(() => expect(browse.hasAttribute("disabled")).toBe(true));
@@ -194,7 +208,7 @@ describe("App", () => {
     const client = new UiClient();
     const { container } = renderApp(client);
 
-    await screen.findByRole("button", { name: /load model/i });
+    await screen.findByRole("button", { name: /load selected model/i });
     const picker = container.querySelector('input[type="file"]') as HTMLInputElement;
 
     fireEvent.change(picker, {

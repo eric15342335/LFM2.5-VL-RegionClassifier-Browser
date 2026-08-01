@@ -191,6 +191,30 @@ describe("ImageWorkspace", () => {
     );
   });
 
+  it("replaces an existing selection when dragging outside it", async () => {
+    const { canvas, container, onSelectionComplete } = renderWorkspace({
+      selection: standardSelection,
+    });
+
+    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 384, clientY: 288 });
+    await waitFor(() =>
+      expect(
+        container.querySelector(".ReactCrop__crop-selection")?.getAttribute("style")
+      ).toContain("left: 60%")
+    );
+    fireEvent.pointerMove(document, { pointerId: 1, clientX: 576, clientY: 432 });
+    fireEvent.pointerUp(document, { pointerId: 1, clientX: 576, clientY: 432 });
+
+    await waitFor(() =>
+      expect(onSelectionComplete).toHaveBeenLastCalledWith({
+        x1: 0.6,
+        y1: 0.6,
+        x2: 0.9,
+        y2: 0.9,
+      })
+    );
+  });
+
   it("converts the normalized minimum span into ReactCrop pixel constraints", async () => {
     const { canvas, container, onSelectionComplete } = renderWorkspace();
 

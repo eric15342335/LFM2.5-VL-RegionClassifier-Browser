@@ -105,7 +105,10 @@ export interface ClassifyRequest {
 export interface InferenceEngine {
   readonly name: string;
   probe(): Promise<BrowserCapability>;
-  prepare(onProgress?: (event: ProgressEvent) => void): Promise<void>;
+  prepare(
+    profile: import("./inference/execution-profile").ExecutionProfile,
+    onProgress?: (event: ProgressEvent) => void
+  ): Promise<void>;
   loadImage(bytes: ArrayBuffer, descriptor: ImageDescriptor): Promise<void>;
   releaseImage(imageId: string): Promise<void>;
   classify(request: ClassifyRequest): Promise<ClassificationResult>;

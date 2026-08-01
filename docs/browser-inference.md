@@ -9,7 +9,7 @@ The application has two execution domains:
 
 ## Execution profiles
 
-WebGPU is probed before model loading; `shader-f16` is optional. Adapters with it use the configured mixed-precision WebGPU profile. Adapters without it use the all-Q8 CPU/WASM profile, which downloads approximately 630.7 MB of Q8 ONNX artifacts plus configuration and tokenizer files. Images remain local in either profile, and performance depends on the selected backend.
+WebGPU is probed before model loading; `shader-f16` is optional. The UI exposes separate selectors for the vision encoder, text decoder, and token embeddings. Options are generated from the pinned artifact manifest, so FP32, FP16, Q4, Q4F16, and Q8 appear only when the corresponding module export exists. Unsupported runtime combinations remain visible but disabled: FP16/Q4F16 WebGPU requires `shader-f16`, Q8 is CPU/WASM-only for this model, and decoder CPU with vision WebGPU is intentionally excluded. Images remain local under every selectable profile.
 
 `BrowserInferenceClient` is the only main-thread module that creates or terminates the worker. Comlink supplies typed RPC, callback proxies, exception propagation, and transferable `ArrayBuffer` handling. The client deliberately retains a thin lifecycle layer for hard termination, timeouts, one recovery attempt, and replaying retained images after worker recreation.
 
@@ -22,7 +22,7 @@ WebGPU is probed before model loading; `shader-f16` is optional. Adapters with i
 `src/inference/worker-api.ts` defines the boundary:
 
 - `probe(config)`
-- `prepare(config, warmup, onProgress)`
+- `prepare(config, warmup, onProgress, profile)`
 - `loadImage(descriptor, bytes, config)`
 - `releaseImage(imageId)`
 - `classify(request, onProgress)`
