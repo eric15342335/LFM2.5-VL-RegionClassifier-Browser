@@ -64,6 +64,7 @@ const result: ClassificationResult & { browser: { roundTripMs: number } } = {
     rawOutput: "traffic light",
     finishReason: "stop",
     tokenLogprobs: [-0.09],
+    tokens: [{ id: 42, text: "traffic", logprob: -0.09, probability: 0.913931 }],
     usage: {},
   },
   performance: {

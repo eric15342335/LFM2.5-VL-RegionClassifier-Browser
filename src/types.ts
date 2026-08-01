@@ -75,6 +75,12 @@ export interface ClassificationResult {
     rawOutput: string;
     finishReason: string | null;
     tokenLogprobs: number[];
+    tokens: {
+      id: number;
+      text: string;
+      logprob: number | null;
+      probability: number | null;
+    }[];
     usage: Record<string, unknown>;
     processor?: Record<string, unknown>;
   };

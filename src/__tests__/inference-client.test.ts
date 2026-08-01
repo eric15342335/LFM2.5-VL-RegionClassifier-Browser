@@ -54,6 +54,7 @@ function result(label = "cat"): ClassificationResult {
       rawOutput: label,
       finishReason: "stop",
       tokenLogprobs: [-0.2],
+      tokens: [{ id: 42, text: label, logprob: -0.2, probability: 0.818731 }],
       usage: { prompt_tokens: 100, completion_tokens: 1, total_tokens: 101 },
       processor: { image_placeholder_count: 64 },
     },

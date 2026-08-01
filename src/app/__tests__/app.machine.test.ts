@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createActor, waitFor } from "xstate";
 import type { InferenceClientPort, InferenceLifecycleListener } from "../../inference/client";
-import {
-  updateExecutionProfile,
-  type ExecutionProfile,
-} from "../../inference/execution-profile";
+import { updateExecutionProfile, type ExecutionProfile } from "../../inference/execution-profile";
 import type {
   BrowserCapability,
   ClassificationResult,
@@ -58,6 +55,7 @@ const result: ClassificationResult = {
     rawOutput: "traffic light",
     finishReason: "stop",
     tokenLogprobs: [-0.09],
+    tokens: [{ id: 42, text: "traffic", logprob: -0.09, probability: 0.913931 }],
     usage: {},
   },
   performance: {

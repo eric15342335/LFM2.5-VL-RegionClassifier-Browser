@@ -117,12 +117,13 @@ function createProcessor(maxNumPatches = 256, imagePlaceholderCount = 0): unknow
         dims: [1, imagePlaceholderCount],
         data: Array.from({ length: imagePlaceholderCount }, () => 1),
       },
-      pixel_values: { dims: [1, 3, 2, 2] },
+      pixel_values: { dims: [1, 3, 2, 2], type: "float32", data: [1, 2, 3, 4] },
       spatial_shapes: { data: [16, 16], dims: [1, 2] },
     }),
     {
       apply_chat_template: () => "prompt",
       batch_decode: () => ["cat"],
+      decode: (ids: number[]) => (ids[0] === 42 ? "cat" : String(ids[0])),
     }
   );
 
@@ -239,6 +240,20 @@ describe("browser inference worker JPEG model input", () => {
     expect(workerMocks.rawImageFromBlob).toHaveBeenCalledWith(encodedJpeg);
     expect(result).toMatchObject({
       label: "cat",
+      generation: {
+        tokens: [{ id: 42, text: "cat", logprob: -0.1, probability: 0.904837 }],
+        processor: {
+          tensors: {
+            pixel_values: {
+              shape: [1, 3, 2, 2],
+              dtype: "float32",
+              mean: 2.5,
+              standard_deviation: 1.118034,
+              first_values: [1, 2, 3, 4],
+            },
+          },
+        },
+      },
       performance: { encodedJpegBytes: 4 },
     });
     expect(result.crop).not.toHaveProperty("encodedJpegBytes");
@@ -290,6 +305,51 @@ describe("browser inference worker JPEG model input", () => {
       supported: true,
     });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("reports aggregate model download progress", async () => {
+    workerMocks.model = createModel();
+    workerMocks.processor = createProcessor();
+    workerMocks.modelFromPretrained.mockImplementation(async (_repository, options) => {
+      options.progress_callback({
+        status: "progress_total",
+        loaded: 250_000_000,
+        total: 500_000_000,
+      });
+      options.progress_callback({
+        status: "progress_total",
+        loaded: 300_000_000,
+        total: 500_000_000,
+      });
+      options.progress_callback({
+        status: "progress_total",
+        loaded: 500_000_000,
+        total: 500_000_000,
+      });
+
+      return workerMocks.model;
+    });
+    const onProgress = vi.fn();
+
+    await api.prepare(INFERENCE_CONFIG, false, onProgress);
+
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "install",
+        message: "Downloading model files: 250 / 500 MB",
+        progress: 50,
+        detail: { loaded: 250_000_000, total: 500_000_000 },
+      })
+    );
+    expect(onProgress).not.toHaveBeenCalledWith(
+      expect.objectContaining({ detail: { loaded: 300_000_000, total: 500_000_000 } })
+    );
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        progress: 80,
+        detail: { loaded: 500_000_000, total: 500_000_000 },
+      })
+    );
   });
 
   it("passes a selected mixed CPU and WebGPU profile to Transformers.js", async () => {

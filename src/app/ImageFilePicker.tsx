@@ -39,7 +39,15 @@ export function ImageFilePicker({
 
   const processFile = (file: File | undefined) => {
     if (!file || !isAccepted(file, maxSize)) return onReject();
-    onAccept(file);
+
+    const bytes = file.arrayBuffer();
+    const copy = new File([file], file.name, {
+      type: file.type,
+      lastModified: file.lastModified,
+    });
+
+    copy.arrayBuffer = () => bytes;
+    onAccept(copy);
   };
 
   return (
@@ -79,7 +87,7 @@ export function ImageFilePicker({
           event.currentTarget.value = "";
         }}
         onChange={(event) => {
-          processFile(event.currentTarget.files?.[0]);
+          if (!disabled) processFile(event.currentTarget.files?.[0]);
         }}
       />
       {children}

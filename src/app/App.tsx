@@ -156,7 +156,7 @@ export function App({
   return (
     <AppShell
       header={{ height: 68 }}
-      padding="md"
+      padding="sm"
     >
       <AppShell.Header>
         <Container

@@ -83,6 +83,14 @@ export const ClassificationResultSchema = v.object({
     rawOutput: v.string(),
     finishReason: v.nullable(v.string()),
     tokenLogprobs: v.array(finiteNumber),
+    tokens: v.array(
+      v.object({
+        id: finiteNumber,
+        text: v.string(),
+        logprob: v.nullable(finiteNumber),
+        probability: v.nullable(finiteNumber),
+      })
+    ),
     usage: unknownRecord,
     processor: v.optional(unknownRecord),
   }),
