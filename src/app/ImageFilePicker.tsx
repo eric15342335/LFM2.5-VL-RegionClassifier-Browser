@@ -75,9 +75,11 @@ export function ImageFilePicker({
         disabled={disabled}
         aria-label="Upload image"
         className="visually-hidden"
+        onClick={(event) => {
+          event.currentTarget.value = "";
+        }}
         onChange={(event) => {
           processFile(event.currentTarget.files?.[0]);
-          event.currentTarget.value = "";
         }}
       />
       {children}
