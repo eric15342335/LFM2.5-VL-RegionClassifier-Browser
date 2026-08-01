@@ -29,7 +29,6 @@ const descriptor: ImageDescriptor = {
 
 function result(label = "cat"): ClassificationResult {
   return {
-    requestId: "request-1",
     imageId: descriptor.id,
     label,
     tokenProbability: 0.75,
@@ -63,7 +62,6 @@ function result(label = "cat"): ClassificationResult {
       inferenceMs: 5,
       totalMs: 6,
       sourceBytes: descriptor.bytes,
-      encodedJpegBytes: 100,
     },
     runtime: {
       executionLocation: "browser",

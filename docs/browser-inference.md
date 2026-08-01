@@ -36,7 +36,7 @@ Valibot validates the model manifest at startup, image descriptors and regions a
 
 The rewrite preserves the custom inference adapter and preprocessing implementation. `react-image-crop` owns only free-form rectangular pointer, touch, resize, move, and keyboard interaction. The application keeps normalized coordinates as the authoritative state and derives percentage crops for the UI; no rendered-pixel coordinates are persisted. A selection is retained when the user clicks outside it, may touch every image edge, and must span at least 1% on both axes before it can be classified. There is no automatic region after image load; the full image is not classified when no region exists. Users can clear a region by applying zero-width or zero-height coordinates; accidental outside clicks never clear it.
 
-Characterization tests cover normalized rectangle conversion, rectangular masking, no-upscale bilinear resizing, JPEG preparation, processor controls, prompt/token construction, output parsing, score extraction, cancellation, latest-only scheduling, device loss, and retained-image recovery. The interaction library is not used for source-pixel extraction, masking, resizing, tensor construction, or inference.
+Characterization tests cover normalized rectangle conversion, rectangular masking, no-upscale bilinear resizing, processor controls, prompt/token construction, output parsing, score extraction, cancellation, latest-only scheduling, device loss, and retained-image recovery. The interaction library is not used for source-pixel extraction, masking, resizing, tensor construction, or inference.
 
 ## Failure and recovery rules
 

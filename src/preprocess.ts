@@ -8,7 +8,9 @@ export interface DecodedImage {
 }
 
 export interface PreparedCrop {
-  blob: Blob;
+  rgba: Uint8ClampedArray;
+  width: number;
+  height: number;
   details: CropDetails;
 }
 
@@ -155,14 +157,13 @@ function rgbaToCanvas(rgba: Uint8ClampedArray, width: number, height: number): O
   return canvas;
 }
 
-async function resizeAndEncode(
+function resize(
   rgba: Uint8ClampedArray,
   sourceWidth: number,
   sourceHeight: number,
   targetWidth: number,
-  targetHeight: number,
-  jpegQuality: number
-): Promise<Blob> {
+  targetHeight: number
+): Uint8ClampedArray {
   const sourceCanvas = rgbaToCanvas(rgba, sourceWidth, sourceHeight);
   const targetCanvas = new OffscreenCanvas(targetWidth, targetHeight);
   const context = targetCanvas.getContext("2d", { alpha: false });
@@ -173,10 +174,7 @@ async function resizeAndEncode(
   context.imageSmoothingQuality = "low";
   context.drawImage(sourceCanvas, 0, 0, sourceWidth, sourceHeight, 0, 0, targetWidth, targetHeight);
 
-  return targetCanvas.convertToBlob({
-    type: "image/jpeg",
-    quality: jpegQuality / 100,
-  });
+  return context.getImageData(0, 0, targetWidth, targetHeight).data;
 }
 
 function normalizedPixelBox(
@@ -217,20 +215,15 @@ export async function prepareCrop(
   const scale = Math.min(1, config.imageSide / Math.max(beforeWidth, beforeHeight));
   const modelWidth = Math.max(1, roundHalfEven(beforeWidth * scale));
   const modelHeight = Math.max(1, roundHalfEven(beforeHeight * scale));
-  const blob = await resizeAndEncode(
-    isolated,
-    beforeWidth,
-    beforeHeight,
-    modelWidth,
-    modelHeight,
-    config.jpegQuality
-  );
+  const resized = resize(isolated, beforeWidth, beforeHeight, modelWidth, modelHeight);
 
   const cropArea = Math.max(1, beforeWidth * beforeHeight);
   const sourceArea = Math.max(1, image.width * image.height);
 
   return {
-    blob,
+    rgba: resized,
+    width: modelWidth,
+    height: modelHeight,
     details: {
       selectionBox: orderedBox(region).map((value) => roundTo(value, 6)),
       selectionPixels: [...selectionBox],

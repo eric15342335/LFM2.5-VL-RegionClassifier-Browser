@@ -195,7 +195,7 @@ function downloadProgressReporter(id: number): (update: DownloadProgress) => voi
 
     const now = performance.now();
 
-    if (loaded < total && now - lastUpdate < 100) return;
+    if (loaded < total && now - lastUpdate < 1_000) return;
 
     lastUpdate = now;
     progress(
@@ -811,7 +811,7 @@ async function classifyRequest(request: QueuedClassification): Promise<Classific
   });
   const preprocessStarted = performance.now();
   const crop = await prepareCrop(source, request.region, request.config);
-  const rawImage = await RawImage.fromBlob(crop.blob);
+  const rawImage = new RawImage(crop.rgba, crop.width, crop.height, 4);
   const preprocessMs = performance.now() - preprocessStarted;
 
   progress(
@@ -836,7 +836,6 @@ async function classifyRequest(request: QueuedClassification): Promise<Classific
   });
 
   return {
-    requestId: crypto.randomUUID(),
     imageId: request.imageId,
     label,
     tokenProbability: generation.probability,
@@ -861,7 +860,6 @@ async function classifyRequest(request: QueuedClassification): Promise<Classific
       inferenceMs: roundTo(inferenceMs, 3),
       totalMs: roundTo(totalMs, 3),
       sourceBytes: source.descriptor.bytes,
-      encodedJpegBytes: crop.blob.size,
     },
     runtime: {
       engine: "transformers.js",

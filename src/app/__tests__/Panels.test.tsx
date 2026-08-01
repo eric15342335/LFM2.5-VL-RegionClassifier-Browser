@@ -39,7 +39,6 @@ beforeAll(() => {
 });
 
 const result: ClassificationResult & { browser: { roundTripMs: number } } = {
-  requestId: "request-1",
   imageId: "image-1",
   label: "traffic light",
   tokenProbability: 0.91,
@@ -72,7 +71,6 @@ const result: ClassificationResult & { browser: { roundTripMs: number } } = {
     inferenceMs: 30,
     totalMs: 40,
     sourceBytes: 128,
-    encodedJpegBytes: 96,
   },
   runtime: {
     executionLocation: "browser",
@@ -116,7 +114,7 @@ describe("result and diagnostics presentation", () => {
       </MantineProvider>
     );
 
-    fireEvent.click(screen.getByText("Raw result"));
+    fireEvent.click(screen.getByText("Capability, configuration, and raw result"));
     rerender(
       <MantineProvider>
         <DiagnosticsPanel
@@ -133,9 +131,12 @@ describe("result and diagnostics presentation", () => {
       screen.getByRole("button", { name: "Technical error" }).getAttribute("aria-expanded")
     ).toBe("true");
     expect(screen.getByText("Detailed technical error")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Raw result" }).getAttribute("aria-expanded")).toBe(
-      "true"
-    );
+    expect(
+      screen
+        .getByRole("button", { name: "Capability, configuration, and raw result" })
+        .getAttribute("aria-expanded")
+    ).toBe("true");
+    expect(screen.getByText(/"capability": null/)).toBeTruthy();
     expect(screen.getByText(/"rawOutput": "traffic light"/)).toBeTruthy();
     expect(screen.queryByText("Browser session")).toBeNull();
   });

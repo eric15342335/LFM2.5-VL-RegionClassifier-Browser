@@ -1,7 +1,7 @@
 import { Paper, Table, Text, Title } from "@mantine/core";
 import { useEffect, useRef } from "react";
 import type { LatestResult, LoadedImage } from "./app.machine";
-import { formatBytes, formatDuration, formatPercent } from "./format";
+import { formatDuration, formatPercent } from "./format";
 import { sourceCropToPreviewPixels } from "./image-preview";
 
 function Metric({ label, value }: Readonly<{ label: string; value: string }>) {
@@ -82,10 +82,6 @@ export function ResultDetails({
         <Metric
           label="Inference"
           value={formatDuration(result.performance.inferenceMs)}
-        />
-        <Metric
-          label="Encoded crop"
-          value={formatBytes(result.performance.encodedJpegBytes)}
         />
       </div>
       <Table

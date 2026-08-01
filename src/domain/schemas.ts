@@ -71,7 +71,6 @@ const CropDetailsSchema = v.object({
 });
 
 export const ClassificationResultSchema = v.object({
-  requestId: v.string(),
   imageId: v.string(),
   label: v.string(),
   tokenProbability: v.nullable(finiteNumber),
@@ -99,7 +98,6 @@ export const ClassificationResultSchema = v.object({
     inferenceMs: finiteNumber,
     totalMs: finiteNumber,
     sourceBytes: finiteNumber,
-    encodedJpegBytes: finiteNumber,
   }),
   runtime: v.object({
     executionLocation: v.literal("browser"),

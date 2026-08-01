@@ -8,7 +8,7 @@ const workerMocks = vi.hoisted(() => ({
   expose: vi.fn(),
   model: undefined as unknown,
   processor: undefined as unknown,
-  rawImageFromBlob: vi.fn(),
+  rawImageConstructor: vi.fn(),
   modelFromPretrained: vi.fn(),
   requestDevice: vi.fn(),
   adapterFeatures: new Set<string>(["shader-f16"]),
@@ -30,14 +30,14 @@ vi.mock("@huggingface/transformers", () => {
   }
 
   class RawImage {
-    static fromBlob = workerMocks.rawImageFromBlob;
-
     constructor(
       readonly _data: Uint8Array,
       readonly width: number,
       readonly height: number,
       readonly _channels: number
-    ) {}
+    ) {
+      workerMocks.rawImageConstructor(_data, width, height, _channels);
+    }
   }
 
   return {
@@ -76,14 +76,8 @@ class FakeCanvasContext {
 
 class FakeOffscreenCanvas {
   static instances: FakeOffscreenCanvas[] = [];
-  static encodedBlob: Blob | null = null;
 
   readonly context = new FakeCanvasContext();
-  readonly convertToBlob = vi.fn(async () => {
-    if (!FakeOffscreenCanvas.encodedBlob) throw new Error("Missing expected JPEG Blob");
-
-    return FakeOffscreenCanvas.encodedBlob;
-  });
 
   constructor(
     readonly width: number,
@@ -167,7 +161,7 @@ const descriptor: ImageDescriptor = {
   height: 4,
 };
 
-describe("browser inference worker JPEG model input", () => {
+describe("browser inference worker model input", () => {
   let api: WorkerApi;
 
   beforeAll(async () => {
@@ -177,7 +171,6 @@ describe("browser inference worker JPEG model input", () => {
       "createImageBitmap",
       vi.fn(async () => ({ close: vi.fn(), height: 4, width: 4 }))
     );
-    vi.stubGlobal("crypto", { randomUUID: () => "request-1" });
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({ json: async () => [], ok: true }))
@@ -216,15 +209,12 @@ describe("browser inference worker JPEG model input", () => {
     vi.unstubAllGlobals();
   });
 
-  it("passes the encoded crop JPEG Blob directly to RawImage.fromBlob", async () => {
-    const encodedJpeg = new Blob(["jpeg"], { type: "image/jpeg" });
+  it("passes the resized crop pixels directly to RawImage", async () => {
     const config = { ...INFERENCE_CONFIG, cropPadding: 0.25, imageSide: 2 };
 
-    FakeOffscreenCanvas.encodedBlob = encodedJpeg;
     FakeOffscreenCanvas.instances = [];
     workerMocks.model = createModel();
     workerMocks.processor = createProcessor();
-    workerMocks.rawImageFromBlob.mockResolvedValue({ height: 2, width: 2 });
 
     const preparationProgress = vi.fn();
 
@@ -237,7 +227,7 @@ describe("browser inference worker JPEG model input", () => {
       region: { x1: 0.25, y1: 0.25, x2: 0.75, y2: 0.75 },
     });
 
-    expect(workerMocks.rawImageFromBlob).toHaveBeenCalledWith(encodedJpeg);
+    expect(workerMocks.rawImageConstructor).toHaveBeenCalledWith(decodedRgba, 2, 2, 4);
     expect(result).toMatchObject({
       label: "cat",
       generation: {
@@ -254,9 +244,7 @@ describe("browser inference worker JPEG model input", () => {
           },
         },
       },
-      performance: { encodedJpegBytes: 4 },
     });
-    expect(result.crop).not.toHaveProperty("encodedJpegBytes");
     expect(result.generation).not.toHaveProperty("engineTimings");
     expect(result.generation.processor).not.toHaveProperty("processor_warnings");
     for (const [event] of preparationProgress.mock.calls)

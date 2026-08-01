@@ -14,7 +14,6 @@ export interface InferenceConfig {
   imageTokens: number;
   cropPadding: number;
   imageSide: number;
-  jpegQuality: number;
   maxImageBytes: number;
   maxImagePixels: number;
   capabilityProbeTimeoutSeconds: number;
@@ -63,7 +62,6 @@ export interface CropDetails {
 }
 
 export interface ClassificationResult {
-  requestId: string;
   imageId: string;
   label: string;
   tokenProbability: number | null;
@@ -89,7 +87,6 @@ export interface ClassificationResult {
     inferenceMs: number;
     totalMs: number;
     sourceBytes: number;
-    encodedJpegBytes: number;
   };
   runtime: {
     executionLocation: "browser";
