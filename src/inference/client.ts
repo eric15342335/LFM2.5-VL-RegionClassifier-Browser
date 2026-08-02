@@ -11,6 +11,7 @@ import type {
   ProgressEvent,
 } from "../types";
 import { probeBrowserCapability, withTimeout } from "./capability";
+import type { ExecutionProfile } from "./execution-profile";
 import type { WorkerApi } from "./worker-api";
 
 export type InferenceLifecycleListener = (error: Error) => void;
@@ -87,6 +88,7 @@ export class BrowserInferenceClient implements InferenceClientPort {
   private currentJobId: number | null = null;
   private cancelFallback: ReturnType<typeof setTimeout> | null = null;
   private prepared = false;
+  private preparedProfile: ExecutionProfile | null = null;
 
   constructor(
     private readonly config: InferenceConfig,
@@ -120,6 +122,7 @@ export class BrowserInferenceClient implements InferenceClientPort {
     for (const reject of this.pendingRejectors) reject(error);
     this.pendingRejectors.clear();
     this.prepared = false;
+    this.preparedProfile = null;
     this.currentJobId = null;
     if (this.cancelFallback) clearTimeout(this.cancelFallback);
     this.cancelFallback = null;
@@ -152,12 +155,16 @@ export class BrowserInferenceClient implements InferenceClientPort {
     return v.parse(BrowserCapabilitySchema, capability);
   }
 
-  async prepare(onProgress?: (event: ProgressEvent) => void): Promise<void> {
+  async prepare(
+    profile: ExecutionProfile,
+    onProgress?: (event: ProgressEvent) => void
+  ): Promise<void> {
     const operation = this.invoke(
       this.ensureConnection().api.prepare(
         this.config,
         true,
-        onProgress ? proxy(onProgress) : undefined
+        onProgress ? proxy(onProgress) : undefined,
+        profile
       )
     );
     const timeout = setTimeout(() => {
@@ -167,6 +174,7 @@ export class BrowserInferenceClient implements InferenceClientPort {
     try {
       await operation;
       this.prepared = true;
+      this.preparedProfile = profile;
     } finally {
       clearTimeout(timeout);
     }
@@ -241,9 +249,11 @@ export class BrowserInferenceClient implements InferenceClientPort {
 
   private async rebuild(onProgress?: (event: ProgressEvent) => void): Promise<void> {
     const retained = [...this.retainedImages.values()];
+    const profile = this.preparedProfile;
 
+    if (!profile) throw new Error("The active execution profile is unavailable");
     this.hardReset(new Error("Recreating browser inference worker"), false);
-    await this.prepare(onProgress);
+    await this.prepare(profile, onProgress);
     for (const { bytes, descriptor } of retained) await this.loadImage(bytes, descriptor);
   }
 
@@ -295,6 +305,7 @@ export class BrowserInferenceClient implements InferenceClientPort {
     this.retainedImages.clear();
     this.lifecycleListeners.clear();
     this.prepared = false;
+    this.preparedProfile = null;
     this.currentJobId = null;
     if (this.cancelFallback) clearTimeout(this.cancelFallback);
     this.cancelFallback = null;

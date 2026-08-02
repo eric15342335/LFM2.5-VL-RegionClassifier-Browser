@@ -10,6 +10,11 @@ import {
 } from "xstate";
 import { INFERENCE_CONFIG } from "../config";
 import type { InferenceClientPort } from "../inference/client";
+import {
+  createExecutionProfile,
+  selectExecutionProfile,
+  type ExecutionProfile,
+} from "../inference/execution-profile";
 import type {
   BrowserCapability,
   ClassificationResult,
@@ -44,6 +49,7 @@ type AppContext = {
   client: InferenceClientPort;
   decodeImage: ImageDecoder;
   capability: BrowserCapability | null;
+  executionProfile: ExecutionProfile;
   pendingFile: File | null;
   image: LoadedImage | null;
   selection: NormalizedSelection | null;
@@ -59,6 +65,7 @@ type AppContext = {
 export type AppEvent =
   | { type: "RETRY_PROBE" }
   | { type: "LOAD_MODEL" }
+  | { type: "EXECUTION_PROFILE_CHANGED"; profile: ExecutionProfile }
   | { type: "FILE_SELECTED"; file: File }
   | { type: "SELECTION_CHANGED"; selection: NormalizedSelection | null }
   | { type: "SELECTION_COMPLETED"; selection: NormalizedSelection }
@@ -69,7 +76,11 @@ export type AppEvent =
   | { type: "WORKER_RESET"; error: Error }
   | { type: "IMAGE_REPLACED" };
 
-type PrepareInput = Readonly<{ client: InferenceClientPort; parent: ParentPort }>;
+type PrepareInput = Readonly<{
+  client: InferenceClientPort;
+  parent: ParentPort;
+  profile: ExecutionProfile;
+}>;
 type LoadImageInput = Readonly<{
   client: InferenceClientPort;
   decodeImage: ImageDecoder;
@@ -141,7 +152,9 @@ const probeActor = fromPromise<BrowserCapability, InferenceClientPort>(({ input 
 const prepareActor = fromPromise<number, PrepareInput>(async ({ input }) => {
   const started = performance.now();
 
-  await input.client.prepare((event) => input.parent.send({ type: "PROGRESS", event }));
+  await input.client.prepare(input.profile, (event) =>
+    input.parent.send({ type: "PROGRESS", event })
+  );
 
   return performance.now() - started;
 });
@@ -271,6 +284,14 @@ export const appMachine = setup({
         event.type === "PROGRESS" ? event.event.message : context.message,
     }),
     clearEvents: assign({ events: () => [] }),
+    setExecutionProfile: assign({
+      executionProfile: ({ event, context }) =>
+        event.type === "EXECUTION_PROFILE_CHANGED" ? event.profile : context.executionProfile,
+      result: () => null,
+      progress: () => null,
+      technicalError: () => null,
+      message: () => "Execution settings changed. Load the selected model configuration.",
+    }),
     setPendingFile: assign({
       pendingFile: ({ event }) => (event.type === "FILE_SELECTED" ? event.file : null),
       result: () => null,
@@ -296,7 +317,7 @@ export const appMachine = setup({
     markWorkerReset: assign({
       technicalError: ({ event }) =>
         event.type === "WORKER_RESET" ? errorDetails(event.error) : null,
-      message: () => "The WebGPU session was lost. Reload the local model to continue.",
+      message: () => "The inference session was lost. Reload the local model to continue.",
     }),
     markModelReady: assign({
       technicalError: () => null,
@@ -375,6 +396,11 @@ export const appMachine = setup({
     client: input.client,
     decodeImage: input.decodeImage ?? defaultDecodeImage,
     capability: null,
+    executionProfile: createExecutionProfile(INFERENCE_CONFIG.model.dtype, {
+      embed_tokens: "webgpu",
+      vision_encoder: "webgpu",
+      decoder_model_merged: "webgpu",
+    }),
     pendingFile: null,
     image: null,
     selection: null,
@@ -398,10 +424,15 @@ export const appMachine = setup({
             target: "operational",
             actions: assign({
               capability: ({ event }) => outputOf<BrowserCapability>(event),
+              executionProfile: ({ event }) =>
+                selectExecutionProfile(
+                  outputOf<BrowserCapability>(event),
+                  INFERENCE_CONFIG.model.dtype
+                ),
               message: ({ event }) =>
                 outputOf<BrowserCapability>(event).shaderF16
-                  ? "WebGPU with shader-f16 is available. Load the local model to continue."
-                  : "WebGPU is available without shader-f16. The model will run on CPU via WASM.",
+                  ? "WebGPU with shader-f16 is available. Choose settings and load the model."
+                  : "WebGPU is available without shader-f16. Compatible choices remain available.",
               technicalError: () => null,
             }),
           },
@@ -444,6 +475,10 @@ export const appMachine = setup({
           initial: "idle",
           on: {
             LOAD_MODEL: ".loading",
+            EXECUTION_PROFILE_CHANGED: {
+              target: ".idle",
+              actions: "setExecutionProfile",
+            },
             WORKER_RESET: { target: ".error", actions: "markWorkerReset" },
           },
           states: {
@@ -453,7 +488,11 @@ export const appMachine = setup({
               entry: ["startOperation", assign({ message: () => "Loading the local model..." })],
               invoke: {
                 src: "prepare",
-                input: ({ context, self }) => ({ client: context.client, parent: self }),
+                input: ({ context, self }) => ({
+                  client: context.client,
+                  parent: self,
+                  profile: context.executionProfile,
+                }),
                 onDone: {
                   target: "ready",
                   actions: [
@@ -591,7 +630,7 @@ export function primaryActionFor(snapshot: AppSnapshot, modelSize?: string): Pri
   }
   if (!snapshot.hasTag("modelReady")) {
     return {
-      label: modelSize ? `Load model (${modelSize})` : "Load model",
+      label: modelSize ? `Load selected model (${modelSize})` : "Load selected model",
       enabled: true,
       intent: "load-model",
     };

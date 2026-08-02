@@ -24,7 +24,7 @@ You will need:
 
 Corepack is included with Node.js 22–24. On newer Node.js releases, you may need to install it separately.
 
-Browsers with `shader-f16` use the configured mixed-precision WebGPU profile. Other WebGPU adapters use an all-Q8 CPU/WASM profile, which downloads about 630.7 MB of Q8 ONNX artifacts plus configuration and tokenizer files. Performance depends on the selected backend, browser, GPU/CPU, available memory, and selected region.
+After capability probing, the interface exposes separate execution selectors for the vision encoder, text decoder, and token embeddings. Each selector lists the exported FP32, FP16, Q4, Q4F16, and Q8 artifacts on WebGPU and CPU/WASM. Unsupported choices remain visible but disabled. WebGPU FP16/Q4F16 requires `shader-f16`, and Q8 is restricted to CPU/WASM. Performance depends on the selected backend, browser, GPU/CPU, available memory, and selected region.
 
 ## Run locally
 
@@ -99,7 +99,7 @@ The inference path uses:
 
 - [Transformers.js](https://huggingface.co/docs/transformers.js/index) for model loading and preprocessing
 - [ONNX Runtime Web](https://onnxruntime.ai/docs/get-started/with-javascript/web.html) for browser inference
-- WebGPU when `shader-f16` is available, otherwise ONNX Runtime Web WASM with Q8 artifacts
+- per-module WebGPU and ONNX Runtime Web WASM placement selected in the interface
 
 The interface is built with React and Mantine. XState manages application state, Comlink handles worker communication, Valibot validates data, and `react-image-crop` provides region selection.
 

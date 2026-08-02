@@ -8,7 +8,6 @@ type ImageFilePickerProps = Readonly<{
   openRef: MutableRefObject<(() => void) | null>;
   onAccept: (file: File) => void;
   onReject: () => void;
-  onIntent?: () => void;
   children: ReactNode;
 }>;
 
@@ -29,7 +28,6 @@ export function ImageFilePicker({
   openRef,
   onAccept,
   onReject,
-  onIntent,
   children,
 }: ImageFilePickerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -41,7 +39,15 @@ export function ImageFilePicker({
 
   const processFile = (file: File | undefined) => {
     if (!file || !isAccepted(file, maxSize)) return onReject();
-    onAccept(file);
+
+    const bytes = file.arrayBuffer();
+    const copy = new File([file], file.name, {
+      type: file.type,
+      lastModified: file.lastModified,
+    });
+
+    copy.arrayBuffer = () => bytes;
+    onAccept(copy);
   };
 
   return (
@@ -54,7 +60,6 @@ export function ImageFilePicker({
         event.preventDefault();
         if (!disabled) {
           setDragActive(true);
-          onIntent?.();
         }
       }}
       onDragOver={(event) => {
@@ -78,9 +83,11 @@ export function ImageFilePicker({
         disabled={disabled}
         aria-label="Upload image"
         className="visually-hidden"
-        onChange={(event) => {
-          processFile(event.currentTarget.files?.[0]);
+        onClick={(event) => {
           event.currentTarget.value = "";
+        }}
+        onChange={(event) => {
+          if (!disabled) processFile(event.currentTarget.files?.[0]);
         }}
       />
       {children}
@@ -88,8 +95,6 @@ export function ImageFilePicker({
         <Button
           variant="light"
           disabled={disabled}
-          onFocus={onIntent}
-          onPointerEnter={onIntent}
           onClick={() => openRef.current?.()}
         >
           Browse

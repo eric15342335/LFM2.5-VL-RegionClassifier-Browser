@@ -56,9 +56,6 @@ class FakeOffscreenCanvas {
   static instances: FakeOffscreenCanvas[] = [];
 
   readonly context = new FakeCanvasContext();
-  readonly convertToBlob = vi.fn(
-    async (options?: ImageEncodeOptions) => new Blob(["jpeg"], { type: options?.type })
-  );
 
   constructor(
     readonly width: number,
@@ -83,7 +80,7 @@ describe("browser crop preparation", () => {
     vi.unstubAllGlobals();
   });
 
-  it("preserves crop masking, low-quality resize, and JPEG encoding details", async () => {
+  it("preserves crop masking and low-quality resizing", async () => {
     const rgba = new Uint8ClampedArray(
       Array.from({ length: 16 }, (_, pixel) => [pixel, pixel + 20, pixel + 40, 128]).flat()
     );
@@ -91,7 +88,7 @@ describe("browser crop preparation", () => {
     const prepared = await prepareCrop(
       { width: 4, height: 4, rgba },
       { x1: 0.25, y1: 0.25, x2: 0.75, y2: 0.75 },
-      { ...INFERENCE_CONFIG, cropPadding: 0.25, imageSide: 2, jpegQuality: 85 }
+      { ...INFERENCE_CONFIG, cropPadding: 0.25, imageSide: 2 }
     );
 
     const [source, target] = FakeOffscreenCanvas.instances;
@@ -108,7 +105,11 @@ describe("browser crop preparation", () => {
       selectedFractionOfSource: 0.25,
       selectedFractionOfCrop: 0.25,
     });
-    expect(prepared.blob).toMatchObject({ type: "image/jpeg", size: 4 });
+    expect(prepared).toMatchObject({
+      rgba: new Uint8ClampedArray([1, 2, 3, 255]),
+      width: 2,
+      height: 2,
+    });
 
     const masked = source?.context.putImageData.mock.calls[0]?.[0] as FakeImageData;
 
@@ -122,7 +123,6 @@ describe("browser crop preparation", () => {
     expect(target?.context.drawImage).toHaveBeenCalledWith(source, 0, 0, 4, 4, 0, 0, 2, 2);
     expect(target?.context.imageSmoothingEnabled).toBe(true);
     expect(target?.context.imageSmoothingQuality).toBe("low");
-    expect(target?.context.getImageData).not.toHaveBeenCalled();
-    expect(target?.convertToBlob).toHaveBeenCalledWith({ type: "image/jpeg", quality: 0.85 });
+    expect(target?.context.getImageData).toHaveBeenCalledWith(0, 0, 2, 2);
   });
 });

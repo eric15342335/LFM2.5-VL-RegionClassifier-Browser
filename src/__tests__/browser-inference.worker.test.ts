@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { INFERENCE_CONFIG } from "../config";
+import { createExecutionProfile } from "../inference/execution-profile";
 import type { WorkerApi } from "../inference/worker-api";
 import type { ImageDescriptor } from "../types";
 
@@ -7,7 +8,7 @@ const workerMocks = vi.hoisted(() => ({
   expose: vi.fn(),
   model: undefined as unknown,
   processor: undefined as unknown,
-  rawImageFromBlob: vi.fn(),
+  rawImageConstructor: vi.fn(),
   modelFromPretrained: vi.fn(),
   requestDevice: vi.fn(),
   adapterFeatures: new Set<string>(["shader-f16"]),
@@ -29,14 +30,14 @@ vi.mock("@huggingface/transformers", () => {
   }
 
   class RawImage {
-    static fromBlob = workerMocks.rawImageFromBlob;
-
     constructor(
       readonly _data: Uint8Array,
       readonly width: number,
       readonly height: number,
       readonly _channels: number
-    ) {}
+    ) {
+      workerMocks.rawImageConstructor(_data, width, height, _channels);
+    }
   }
 
   return {
@@ -75,14 +76,8 @@ class FakeCanvasContext {
 
 class FakeOffscreenCanvas {
   static instances: FakeOffscreenCanvas[] = [];
-  static encodedBlob: Blob | null = null;
 
   readonly context = new FakeCanvasContext();
-  readonly convertToBlob = vi.fn(async () => {
-    if (!FakeOffscreenCanvas.encodedBlob) throw new Error("Missing expected JPEG Blob");
-
-    return FakeOffscreenCanvas.encodedBlob;
-  });
 
   constructor(
     readonly width: number,
@@ -116,12 +111,13 @@ function createProcessor(maxNumPatches = 256, imagePlaceholderCount = 0): unknow
         dims: [1, imagePlaceholderCount],
         data: Array.from({ length: imagePlaceholderCount }, () => 1),
       },
-      pixel_values: { dims: [1, 3, 2, 2] },
+      pixel_values: { dims: [1, 3, 2, 2], type: "float32", data: [1, 2, 3, 4] },
       spatial_shapes: { data: [16, 16], dims: [1, 2] },
     }),
     {
       apply_chat_template: () => "prompt",
       batch_decode: () => ["cat"],
+      decode: (ids: number[]) => (ids[0] === 42 ? "cat" : String(ids[0])),
     }
   );
 
@@ -165,7 +161,7 @@ const descriptor: ImageDescriptor = {
   height: 4,
 };
 
-describe("browser inference worker JPEG model input", () => {
+describe("browser inference worker model input", () => {
   let api: WorkerApi;
 
   beforeAll(async () => {
@@ -175,7 +171,6 @@ describe("browser inference worker JPEG model input", () => {
       "createImageBitmap",
       vi.fn(async () => ({ close: vi.fn(), height: 4, width: 4 }))
     );
-    vi.stubGlobal("crypto", { randomUUID: () => "request-1" });
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({ json: async () => [], ok: true }))
@@ -214,15 +209,12 @@ describe("browser inference worker JPEG model input", () => {
     vi.unstubAllGlobals();
   });
 
-  it("passes the encoded crop JPEG Blob directly to RawImage.fromBlob", async () => {
-    const encodedJpeg = new Blob(["jpeg"], { type: "image/jpeg" });
+  it("passes the resized crop pixels directly to RawImage", async () => {
     const config = { ...INFERENCE_CONFIG, cropPadding: 0.25, imageSide: 2 };
 
-    FakeOffscreenCanvas.encodedBlob = encodedJpeg;
     FakeOffscreenCanvas.instances = [];
     workerMocks.model = createModel();
     workerMocks.processor = createProcessor();
-    workerMocks.rawImageFromBlob.mockResolvedValue({ height: 2, width: 2 });
 
     const preparationProgress = vi.fn();
 
@@ -235,12 +227,24 @@ describe("browser inference worker JPEG model input", () => {
       region: { x1: 0.25, y1: 0.25, x2: 0.75, y2: 0.75 },
     });
 
-    expect(workerMocks.rawImageFromBlob).toHaveBeenCalledWith(encodedJpeg);
+    expect(workerMocks.rawImageConstructor).toHaveBeenCalledWith(decodedRgba, 2, 2, 4);
     expect(result).toMatchObject({
       label: "cat",
-      performance: { encodedJpegBytes: 4 },
+      generation: {
+        tokens: [{ id: 42, text: "cat", logprob: -0.1, probability: 0.904837 }],
+        processor: {
+          tensors: {
+            pixel_values: {
+              shape: [1, 3, 2, 2],
+              dtype: "float32",
+              mean: 2.5,
+              standard_deviation: 1.118034,
+              first_values: [1, 2, 3, 4],
+            },
+          },
+        },
+      },
     });
-    expect(result.crop).not.toHaveProperty("encodedJpegBytes");
     expect(result.generation).not.toHaveProperty("engineTimings");
     expect(result.generation.processor).not.toHaveProperty("processor_warnings");
     for (const [event] of preparationProgress.mock.calls)
@@ -256,7 +260,7 @@ describe("browser inference worker JPEG model input", () => {
     });
   });
 
-  it("uses FP32 embeddings and Q8 WASM without shader-f16", async () => {
+  it("uses plain Q4 WebGPU without shader-f16", async () => {
     workerMocks.adapterFeatures = new Set();
     workerMocks.model = createModel();
     workerMocks.processor = createProcessor();
@@ -272,74 +276,84 @@ describe("browser inference worker JPEG model input", () => {
       INFERENCE_CONFIG.model.repository,
       expect.objectContaining({
         device: {
-          embed_tokens: "wasm",
-          vision_encoder: "wasm",
-          decoder_model_merged: "wasm",
+          embed_tokens: "webgpu",
+          vision_encoder: "webgpu",
+          decoder_model_merged: "webgpu",
         },
-        dtype: { embed_tokens: "fp32", vision_encoder: "q8", decoder_model_merged: "q8" },
+        dtype: { embed_tokens: "q4", vision_encoder: "q4", decoder_model_merged: "q4" },
       })
     );
   });
 
-  it("supports WebGPU when browser quota metadata is unavailable", async () => {
+  it("probes WebGPU without requesting remote model metadata", async () => {
     vi.mocked(navigator.storage.estimate).mockRejectedValueOnce(new Error("unavailable"));
-    vi.mocked(fetch).mockResolvedValueOnce({
-      json: async () =>
-        INFERENCE_CONFIG.model.artifacts.map((artifact) => ({ path: artifact.path, size: 1 })),
-      ok: true,
-    } as Response);
+    vi.mocked(fetch).mockClear();
 
     await expect(api.probe(INFERENCE_CONFIG)).resolves.toMatchObject({
-      storage: { download: 11 },
+      supported: true,
     });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("recomputes download metadata for each model configuration", async () => {
-    const artifact = INFERENCE_CONFIG.model.artifacts[0]!;
+  it("reports aggregate model download progress", async () => {
+    workerMocks.model = createModel();
+    workerMocks.processor = createProcessor();
+    workerMocks.modelFromPretrained.mockImplementation(async (_repository, options) => {
+      options.progress_callback({
+        status: "progress_total",
+        loaded: 250_000_000,
+        total: 500_000_000,
+      });
+      options.progress_callback({
+        status: "progress_total",
+        loaded: 300_000_000,
+        total: 500_000_000,
+      });
+      options.progress_callback({
+        status: "progress_total",
+        loaded: 500_000_000,
+        total: 500_000_000,
+      });
 
-    vi.mocked(fetch)
-      .mockResolvedValueOnce({
-        json: async () =>
-          INFERENCE_CONFIG.model.artifacts.map((entry) => ({ path: entry.path, size: 1 })),
-        ok: true,
-      } as Response)
-      .mockResolvedValueOnce({
-        json: async () => [{ path: artifact.path, size: 7 }],
-        ok: true,
-      } as Response);
-
-    await expect(api.probe(INFERENCE_CONFIG)).resolves.toMatchObject({
-      storage: { download: 11 },
+      return workerMocks.model;
     });
-    await expect(
-      api.probe({
-        ...INFERENCE_CONFIG,
-        model: { ...INFERENCE_CONFIG.model, artifacts: [artifact], revision: "alternate" },
+    const onProgress = vi.fn();
+
+    await api.prepare(INFERENCE_CONFIG, false, onProgress);
+
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "install",
+        message: "Downloading model files: 250 / 500 MB",
+        progress: 50,
+        detail: { loaded: 250_000_000, total: 500_000_000 },
       })
-    ).resolves.toMatchObject({ storage: { download: 7 } });
+    );
+    expect(onProgress).not.toHaveBeenCalledWith(
+      expect.objectContaining({ detail: { loaded: 300_000_000, total: 500_000_000 } })
+    );
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        progress: 80,
+        detail: { loaded: 500_000_000, total: 500_000_000 },
+      })
+    );
   });
 
-  it("uses FP32 embedding and Q8 model artifacts without shader-f16", async () => {
-    workerMocks.adapterFeatures = new Set();
-    const selected = INFERENCE_CONFIG.model.artifacts.filter(
-      (artifact) =>
-        artifact.role !== "license" &&
-        (!artifact.dtype || artifact.dtype === (artifact.role === "embedding" ? "fp32" : "q8"))
+  it("passes a selected mixed CPU and WebGPU profile to Transformers.js", async () => {
+    workerMocks.model = createModel();
+    workerMocks.processor = createProcessor();
+    const profile = createExecutionProfile(
+      { embed_tokens: "q4", vision_encoder: "q8", decoder_model_merged: "q4" },
+      { embed_tokens: "webgpu", vision_encoder: "wasm", decoder_model_merged: "webgpu" }
     );
 
-    vi.mocked(fetch).mockResolvedValueOnce({
-      json: async () => [
-        ...selected.map((artifact, index) => ({ path: artifact.path, size: index + 1 })),
-        { path: "onnx/embed_tokens_fp16.onnx", size: 1000 },
-        { path: "onnx/embed_tokens_quantized.onnx", size: 1000 },
-        { path: "LICENSE", size: 1000 },
-      ],
-      ok: true,
-    } as Response);
+    await api.prepare(INFERENCE_CONFIG, false, undefined, profile);
 
-    await expect(api.probe(INFERENCE_CONFIG)).resolves.toMatchObject({
-      storage: { download: (selected.length * (selected.length + 1)) / 2 },
-    });
+    expect(workerMocks.modelFromPretrained).toHaveBeenCalledWith(
+      INFERENCE_CONFIG.model.repository,
+      expect.objectContaining({ device: profile.device, dtype: profile.dtype })
+    );
   });
 
   it("preserves the configured profile and WebGPU placement when shader-f16 is supported", async () => {

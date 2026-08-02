@@ -1,10 +1,6 @@
 import { Paper, Stack, Text, ThemeIcon, Title } from "@mantine/core";
-import { lazy, Suspense } from "react";
 import type { LatestResult, LoadedImage } from "./app.machine";
-
-const LazyResultDetails = lazy(() =>
-  import("./ResultDetails").then((module) => ({ default: module.ResultDetails }))
-);
+import { ResultDetails } from "./ResultDetails";
 
 export function ResultPanel({
   result,
@@ -48,21 +44,10 @@ export function ResultPanel({
             </Text>
           </Stack>
         ) : (
-          <Suspense
-            fallback={
-              <Text
-                size="sm"
-                c="dimmed"
-              >
-                Loading result…
-              </Text>
-            }
-          >
-            <LazyResultDetails
-              result={result}
-              image={image}
-            />
-          </Suspense>
+          <ResultDetails
+            result={result}
+            image={image}
+          />
         )}
       </Stack>
     </Paper>

@@ -45,9 +45,9 @@ export const ModelManifestSchema = v.object({
   runtime: v.literal("webgpu"),
   integrity_status: v.optional(v.picklist(["pending-release-verification", "verified"])),
   dtype: v.object({
-    embed_tokens: v.picklist(["fp16", "q4", "q4f16", "q8"]),
-    vision_encoder: v.picklist(["fp16", "q4", "q4f16", "q8"]),
-    decoder_model_merged: v.picklist(["fp16", "q4", "q4f16", "q8"]),
+    embed_tokens: v.picklist(["fp32", "fp16", "q4", "q4f16", "q8"]),
+    vision_encoder: v.picklist(["fp32", "fp16", "q4", "q4f16", "q8"]),
+    decoder_model_merged: v.picklist(["fp32", "fp16", "q4", "q4f16", "q8"]),
   }),
   artifacts: v.array(ModelArtifactSchema),
   license: v.pipe(v.string(), v.minLength(1)),
@@ -71,7 +71,6 @@ const CropDetailsSchema = v.object({
 });
 
 export const ClassificationResultSchema = v.object({
-  requestId: v.string(),
   imageId: v.string(),
   label: v.string(),
   tokenProbability: v.nullable(finiteNumber),
@@ -83,6 +82,14 @@ export const ClassificationResultSchema = v.object({
     rawOutput: v.string(),
     finishReason: v.nullable(v.string()),
     tokenLogprobs: v.array(finiteNumber),
+    tokens: v.array(
+      v.object({
+        id: finiteNumber,
+        text: v.string(),
+        logprob: v.nullable(finiteNumber),
+        probability: v.nullable(finiteNumber),
+      })
+    ),
     usage: unknownRecord,
     processor: v.optional(unknownRecord),
   }),
@@ -91,7 +98,6 @@ export const ClassificationResultSchema = v.object({
     inferenceMs: finiteNumber,
     totalMs: finiteNumber,
     sourceBytes: finiteNumber,
-    encodedJpegBytes: finiteNumber,
   }),
   runtime: v.object({
     executionLocation: v.literal("browser"),

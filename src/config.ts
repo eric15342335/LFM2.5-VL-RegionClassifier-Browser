@@ -17,7 +17,6 @@ export const INFERENCE_CONFIG: Readonly<InferenceConfig> = Object.freeze({
   imageTokens: 64,
   cropPadding: 0.08,
   imageSide: 384,
-  jpegQuality: 88,
   maxImageBytes: 100 * 1024 * 1024,
   maxImagePixels: 40_000_000,
   capabilityProbeTimeoutSeconds: 15,

@@ -8,7 +8,7 @@
     "dev": "vite",
     "start": "vite preview",
     "prebuild": "node scripts/copy-readme-to-llms.mjs",
-    "build": "vite build && node scripts/inline-entry-css.mjs",
+    "build": "vite build",
     "diff": "git diff --staged --function-context > commit.txt",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

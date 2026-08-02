@@ -14,7 +14,6 @@ export interface InferenceConfig {
   imageTokens: number;
   cropPadding: number;
   imageSide: number;
-  jpegQuality: number;
   maxImageBytes: number;
   maxImagePixels: number;
   capabilityProbeTimeoutSeconds: number;
@@ -63,7 +62,6 @@ export interface CropDetails {
 }
 
 export interface ClassificationResult {
-  requestId: string;
   imageId: string;
   label: string;
   tokenProbability: number | null;
@@ -75,6 +73,12 @@ export interface ClassificationResult {
     rawOutput: string;
     finishReason: string | null;
     tokenLogprobs: number[];
+    tokens: {
+      id: number;
+      text: string;
+      logprob: number | null;
+      probability: number | null;
+    }[];
     usage: Record<string, unknown>;
     processor?: Record<string, unknown>;
   };
@@ -83,7 +87,6 @@ export interface ClassificationResult {
     inferenceMs: number;
     totalMs: number;
     sourceBytes: number;
-    encodedJpegBytes: number;
   };
   runtime: {
     executionLocation: "browser";
@@ -105,7 +108,10 @@ export interface ClassifyRequest {
 export interface InferenceEngine {
   readonly name: string;
   probe(): Promise<BrowserCapability>;
-  prepare(onProgress?: (event: ProgressEvent) => void): Promise<void>;
+  prepare(
+    profile: import("./inference/execution-profile").ExecutionProfile,
+    onProgress?: (event: ProgressEvent) => void
+  ): Promise<void>;
   loadImage(bytes: ArrayBuffer, descriptor: ImageDescriptor): Promise<void>;
   releaseImage(imageId: string): Promise<void>;
   classify(request: ClassifyRequest): Promise<ClassificationResult>;
