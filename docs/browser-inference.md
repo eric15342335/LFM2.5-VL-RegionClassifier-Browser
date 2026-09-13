@@ -34,9 +34,11 @@ Valibot validates the model manifest at startup, image descriptors and regions a
 
 ## Parity-sensitive processing
 
-The rewrite preserves the custom inference adapter and preprocessing implementation. `react-image-crop` owns only free-form rectangular pointer, touch, resize, move, and keyboard interaction. The application keeps normalized coordinates as the authoritative state and derives percentage crops for the UI; no rendered-pixel coordinates are persisted. A selection is retained when the user clicks outside it, may touch every image edge, and must span at least 1% on both axes before it can be classified. There is no automatic region after image load; the full image is not classified when no region exists. Users can clear a region by applying zero-width or zero-height coordinates; accidental outside clicks never clear it.
+The rewrite preserves the custom inference adapter and preprocessing implementation. `react-image-crop` owns only free-form rectangular pointer, touch, resize, move, and keyboard interaction. The application keeps normalized coordinates as the authoritative state and derives percentage crops for the UI; no rendered-pixel coordinates are persisted. A selection may touch every image edge and must span at least 1% on both axes before it can be classified. Dragging outside an existing selection starts a new region and replaces the previous one. There is no automatic region after image load; the full image is not classified when no region exists. Users can clear a region by applying zero-width or zero-height coordinates.
 
-Characterization tests cover normalized rectangle conversion, rectangular masking, no-upscale bilinear resizing, JPEG preparation, processor controls, prompt/token construction, output parsing, score extraction, cancellation, latest-only scheduling, device loss, and retained-image recovery. The interaction library is not used for source-pixel extraction, masking, resizing, tensor construction, or inference.
+After masking and no-upscale bilinear resizing, preprocessing passes the resized RGBA pixel buffer directly to Transformers.js as a four-channel `RawImage`. It does not encode the prepared crop to JPEG and decode it again before inference. This removes a lossy round trip while keeping the resize and masking behavior explicit and testable.
+
+Characterization tests cover normalized rectangle conversion, rectangular masking, no-upscale bilinear resizing, direct RGBA model input, processor controls, prompt/token construction, output parsing, score extraction, cancellation, latest-only scheduling, device loss, and retained-image recovery. The interaction library is not used for source-pixel extraction, masking, resizing, tensor construction, or inference.
 
 ## Failure and recovery rules
 

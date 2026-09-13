@@ -29,7 +29,6 @@ const descriptor: ImageDescriptor = {
 };
 
 const result: ClassificationResult = {
-  requestId: "request-1",
   imageId: descriptor.id,
   label: "traffic light",
   tokenProbability: 0.91,
@@ -54,6 +53,7 @@ const result: ClassificationResult = {
     rawOutput: "traffic light",
     finishReason: "stop",
     tokenLogprobs: [-0.09],
+    tokens: [{ id: 42, text: "traffic", logprob: -0.09, probability: 0.913931 }],
     usage: {},
   },
   performance: {
@@ -61,7 +61,6 @@ const result: ClassificationResult = {
     inferenceMs: 30,
     totalMs: 40,
     sourceBytes: 128,
-    encodedJpegBytes: 96,
   },
   runtime: {
     executionLocation: "browser",

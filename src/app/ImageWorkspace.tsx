@@ -212,7 +212,6 @@ export function ImageWorkspace({
           <ReactCrop
             crop={crop}
             disabled={disabled}
-            keepSelection
             minWidth={renderedCanvasSize.width * MINIMUM_SELECTION_SPAN}
             minHeight={renderedCanvasSize.height * MINIMUM_SELECTION_SPAN}
             ariaLabels={{
@@ -244,7 +243,7 @@ export function ImageWorkspace({
             size="sm"
             c="dimmed"
           >
-            Draw, move, or resize one rectangular region. Clicking outside keeps it selected.
+            Draw, move, or resize one rectangular region. Drag outside it to draw a new one.
           </Text>
           <Text
             component="button"

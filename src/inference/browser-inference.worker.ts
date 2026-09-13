@@ -42,6 +42,11 @@ import type {
 } from "./worker-api";
 
 type UnknownRecord = Record<string, unknown>;
+type DownloadProgress = {
+  status: string;
+  loaded?: number;
+  total?: number;
+};
 type ModelImage = Pick<DecodedImage, "width" | "height">;
 type ProcessorInputs = UnknownRecord & {
   input_ids?: unknown;
@@ -76,6 +81,7 @@ type RuntimeProcessor = ProcessorConfigSurface & {
     options: { add_generation_prompt: boolean }
   ): string;
   batch_decode(tensor: unknown, options: { skip_special_tokens: boolean }): readonly unknown[];
+  decode(tokenIds: number[], options: { skip_special_tokens: boolean }): unknown;
 } & ((
     image: ModelImage,
     prompt: string,
@@ -83,6 +89,8 @@ type RuntimeProcessor = ProcessorConfigSurface & {
   ) => Promise<ProcessorInputs>);
 type RuntimeModel = {
   config?: { image_token_id?: unknown };
+  encode_image?: (inputs: UnknownRecord) => Promise<unknown>;
+  encode_text?: (inputs: UnknownRecord) => Promise<unknown>;
   generate(
     options: ProcessorInputs & {
       do_sample: boolean;
@@ -177,6 +185,29 @@ function progress(
   };
 
   void progressListeners.get(id)?.(event);
+}
+
+function downloadProgressReporter(id: number): (update: DownloadProgress) => void {
+  let lastUpdate = -Infinity;
+
+  return (update) => {
+    const { loaded, total } = update;
+
+    if (update.status !== "progress_total" || loaded === undefined || !total) return;
+
+    const now = performance.now();
+
+    if (loaded < total && now - lastUpdate < 1_000) return;
+
+    lastUpdate = now;
+    progress(
+      id,
+      "install",
+      `Downloading model files: ${Math.round(loaded / 1_000_000)} / ${Math.round(total / 1_000_000)} MB`,
+      20 + Math.min(1, loaded / total) * 60,
+      { loaded, total }
+    );
+  };
 }
 
 function asRecord(value: unknown): UnknownRecord | undefined {
@@ -412,6 +443,7 @@ async function prepareModel(id: number, config: InferenceConfig, warmup = true):
     const baseOptions = {
       revision: config.model.revision,
     };
+    const onDownloadProgress = downloadProgressReporter(id);
 
     progress(id, "install", "Downloading required model files", 20);
     const [processorResult, modelResult] = await Promise.allSettled([
@@ -420,6 +452,7 @@ async function prepareModel(id: number, config: InferenceConfig, warmup = true):
         ...baseOptions,
         device: profile.device,
         dtype: profile.dtype,
+        progress_callback: onDownloadProgress,
       }),
     ]);
 
@@ -473,6 +506,81 @@ function tensorData(tensor: unknown): ArrayLike<unknown> {
   return isArrayLike(data) ? data : [];
 }
 
+function tensorSummary(tensor: unknown): Record<string, unknown> | undefined {
+  const record = asRecord(tensor);
+  const data = tensorData(tensor);
+
+  if (!record || !data.length) return undefined;
+  let finite = 0;
+  let nonFinite = 0;
+  let min = Infinity;
+  let max = -Infinity;
+  let sum = 0;
+  let sumSquares = 0;
+
+  for (let index = 0; index < data.length; index += 1) {
+    const value = Number(data[index]);
+
+    if (!Number.isFinite(value)) {
+      nonFinite += 1;
+      continue;
+    }
+    finite += 1;
+    min = Math.min(min, value);
+    max = Math.max(max, value);
+    sum += value;
+    sumSquares += value * value;
+  }
+  const mean = finite ? sum / finite : NaN;
+
+  return {
+    shape: record.dims,
+    dtype: record.type ?? record.dtype,
+    location: record.location,
+    values: data.length,
+    finite,
+    non_finite: nonFinite,
+    min: finite ? roundTo(min, 6) : null,
+    max: finite ? roundTo(max, 6) : null,
+    mean: finite ? roundTo(mean, 6) : null,
+    standard_deviation: finite
+      ? roundTo(Math.sqrt(Math.max(0, sumSquares / finite - mean * mean)), 6)
+      : null,
+    l2_norm: finite ? roundTo(Math.sqrt(sumSquares), 6) : null,
+    first_values: Array.from(data).slice(0, 8).map(Number),
+  };
+}
+
+function captureModelTensorSummaries(
+  activeModel: RuntimeModel,
+  summaries: Record<string, unknown>
+): () => void {
+  const originalEncodeText = activeModel.encode_text;
+  const originalEncodeImage = activeModel.encode_image;
+
+  if (originalEncodeText)
+    activeModel.encode_text = async (inputs) => {
+      const output = await originalEncodeText.call(activeModel, inputs);
+
+      summaries.text_embeddings ??= tensorSummary(output);
+
+      return output;
+    };
+  if (originalEncodeImage)
+    activeModel.encode_image = async (inputs) => {
+      const output = await originalEncodeImage.call(activeModel, inputs);
+
+      summaries.vision_encoder_output ??= tensorSummary(output);
+
+      return output;
+    };
+
+  return () => {
+    if (originalEncodeText) activeModel.encode_text = originalEncodeText;
+    if (originalEncodeImage) activeModel.encode_image = originalEncodeImage;
+  };
+}
+
 function isSliceableTensor(value: unknown): value is SliceableTensor {
   return typeof asRecord(value)?.slice === "function";
 }
@@ -510,7 +618,8 @@ function geometricMeanTokenProbability(tokenLogprobs: readonly unknown[]): {
 
 function processorDiagnostics(
   inputs: ProcessorInputs,
-  prepared: ModelImage
+  prepared: ModelImage,
+  modelTensors: Record<string, unknown>
 ): Record<string, unknown> {
   const inputIds = inputs?.input_ids;
   const attentionMask = inputs?.attention_mask;
@@ -548,6 +657,10 @@ function processorDiagnostics(
     text_sequence_length: tensorLastDimension(inputIds),
     image_placeholder_count: placeholders,
     attention_mask_length: tensorLastDimension(attentionMask),
+    tensors: {
+      pixel_values: tensorSummary(pixelValues),
+      ...modelTensors,
+    },
   };
 }
 
@@ -596,6 +709,7 @@ async function generate(
   rawOutput: string;
   probability: number | null;
   logprobs: number[];
+  tokens: ClassificationResult["generation"]["tokens"];
   diagnostics: Record<string, unknown>;
   inputLength: number;
   outputTokens: number;
@@ -604,18 +718,26 @@ async function generate(
   const activeModel = requiredModel();
   const activeProcessor = requiredProcessor();
   const inputLength = tensorLastDimension(inputs.input_ids);
+  const modelTensors: Record<string, unknown> = {};
+  const stopCapturingModelTensors = captureModelTensorSummaries(activeModel, modelTensors);
 
   stoppingCriteria.reset();
-  const generated = await activeModel.generate({
-    ...inputs,
-    do_sample: false,
-    num_beams: 1,
-    max_new_tokens: config.maxOutputTokens,
-    use_cache: true,
-    return_dict_in_generate: config.logprobs,
-    output_scores: config.logprobs,
-    stopping_criteria: stoppingCriteria,
-  });
+  let generated: unknown;
+
+  try {
+    generated = await activeModel.generate({
+      ...inputs,
+      do_sample: false,
+      num_beams: 1,
+      max_new_tokens: config.maxOutputTokens,
+      use_cache: true,
+      return_dict_in_generate: config.logprobs,
+      output_scores: config.logprobs,
+      stopping_criteria: stoppingCriteria,
+    });
+  } finally {
+    stopCapturingModelTensors();
+  }
   const generatedRecord = asRecord(generated);
   const sequences = generatedRecord?.sequences ?? generated;
   const generatedTensor = sliceGenerated(sequences, inputLength);
@@ -630,6 +752,16 @@ async function generate(
   const scoreResult = config.logprobs
     ? geometricMeanTokenProbability(Array.isArray(tokenLogprobs) ? tokenLogprobs : [])
     : { probability: null, logprobs: [] };
+  const tokens = Array.from(tokenIds, Number).map((id, index) => {
+    const logprob = scoreResult.logprobs[index] ?? null;
+
+    return {
+      id,
+      text: String(activeProcessor.decode([id], { skip_special_tokens: false })),
+      logprob,
+      probability: logprob === null ? null : roundTo(Math.exp(logprob), 6),
+    };
+  });
 
   if (!rawOutput && tokenIds.length === 0)
     throw new Error("Warm-up/generation produced no finite output");
@@ -638,7 +770,8 @@ async function generate(
     rawOutput,
     probability: scoreResult.probability,
     logprobs: scoreResult.logprobs,
-    diagnostics: processorDiagnostics(inputs, rawImage),
+    tokens,
+    diagnostics: processorDiagnostics(inputs, rawImage, modelTensors),
     inputLength,
     outputTokens: tokenIds.length,
   };
@@ -733,7 +866,7 @@ async function classifyRequest(request: QueuedClassification): Promise<Classific
   });
   const preprocessStarted = performance.now();
   const crop = await prepareCrop(source, request.region, request.config);
-  const rawImage = await RawImage.fromBlob(crop.blob);
+  const rawImage = new RawImage(crop.rgba, crop.width, crop.height, 4);
   const preprocessMs = performance.now() - preprocessStarted;
 
   progress(
@@ -758,7 +891,6 @@ async function classifyRequest(request: QueuedClassification): Promise<Classific
   });
 
   return {
-    requestId: crypto.randomUUID(),
     imageId: request.imageId,
     label,
     tokenProbability: generation.probability,
@@ -770,6 +902,7 @@ async function classifyRequest(request: QueuedClassification): Promise<Classific
       rawOutput: generation.rawOutput,
       finishReason: generation.outputTokens >= request.config.maxOutputTokens ? "length" : "stop",
       tokenLogprobs: generation.logprobs,
+      tokens: generation.tokens,
       usage: {
         prompt_tokens: generation.inputLength,
         completion_tokens: generation.outputTokens,
@@ -782,7 +915,6 @@ async function classifyRequest(request: QueuedClassification): Promise<Classific
       inferenceMs: roundTo(inferenceMs, 3),
       totalMs: roundTo(totalMs, 3),
       sourceBytes: source.descriptor.bytes,
-      encodedJpegBytes: crop.blob.size,
     },
     runtime: {
       engine: "transformers.js",

@@ -140,16 +140,10 @@ export function DiagnosticsPanel({
               </Stack>
             </Accordion.Panel>
           </Accordion.Item>
-          <Accordion.Item value="capability">
-            <Accordion.Control>Capability and configuration</Accordion.Control>
+          <Accordion.Item value="diagnostics">
+            <Accordion.Control>Capability, configuration, and raw result</Accordion.Control>
             <Accordion.Panel>
-              <JsonBlock value={{ capability, config: INFERENCE_CONFIG }} />
-            </Accordion.Panel>
-          </Accordion.Item>
-          <Accordion.Item value="result">
-            <Accordion.Control>Raw result</Accordion.Control>
-            <Accordion.Panel>
-              <JsonBlock value={result} />
+              <JsonBlock value={{ capability, config: INFERENCE_CONFIG, result }} />
             </Accordion.Panel>
           </Accordion.Item>
         </Accordion>

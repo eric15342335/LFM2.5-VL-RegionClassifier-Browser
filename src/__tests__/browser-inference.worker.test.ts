@@ -7,7 +7,7 @@ const workerMocks = vi.hoisted(() => ({
   expose: vi.fn(),
   model: undefined as unknown,
   processor: undefined as unknown,
-  rawImageFromBlob: vi.fn(),
+  rawImageConstructor: vi.fn(),
   modelFromPretrained: vi.fn(),
   requestDevice: vi.fn(),
   adapterFeatures: new Set<string>(["shader-f16"]),
@@ -29,14 +29,14 @@ vi.mock("@huggingface/transformers", () => {
   }
 
   class RawImage {
-    static fromBlob = workerMocks.rawImageFromBlob;
-
     constructor(
       readonly _data: Uint8Array,
       readonly width: number,
       readonly height: number,
       readonly _channels: number
-    ) {}
+    ) {
+      workerMocks.rawImageConstructor(_data, width, height, _channels);
+    }
   }
 
   return {
@@ -75,14 +75,8 @@ class FakeCanvasContext {
 
 class FakeOffscreenCanvas {
   static instances: FakeOffscreenCanvas[] = [];
-  static encodedBlob: Blob | null = null;
 
   readonly context = new FakeCanvasContext();
-  readonly convertToBlob = vi.fn(async () => {
-    if (!FakeOffscreenCanvas.encodedBlob) throw new Error("Missing expected JPEG Blob");
-
-    return FakeOffscreenCanvas.encodedBlob;
-  });
 
   constructor(
     readonly width: number,
@@ -116,12 +110,13 @@ function createProcessor(maxNumPatches = 256, imagePlaceholderCount = 0): unknow
         dims: [1, imagePlaceholderCount],
         data: Array.from({ length: imagePlaceholderCount }, () => 1),
       },
-      pixel_values: { dims: [1, 3, 2, 2] },
+      pixel_values: { dims: [1, 3, 2, 2], type: "float32", data: [1, 2, 3, 4] },
       spatial_shapes: { data: [16, 16], dims: [1, 2] },
     }),
     {
       apply_chat_template: () => "prompt",
       batch_decode: () => ["cat"],
+      decode: (ids: number[]) => (ids[0] === 42 ? "cat" : String(ids[0])),
     }
   );
 
@@ -165,7 +160,7 @@ const descriptor: ImageDescriptor = {
   height: 4,
 };
 
-describe("browser inference worker JPEG model input", () => {
+describe("browser inference worker model input", () => {
   let api: WorkerApi;
 
   beforeAll(async () => {
@@ -175,7 +170,6 @@ describe("browser inference worker JPEG model input", () => {
       "createImageBitmap",
       vi.fn(async () => ({ close: vi.fn(), height: 4, width: 4 }))
     );
-    vi.stubGlobal("crypto", { randomUUID: () => "request-1" });
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({ json: async () => [], ok: true }))
@@ -214,15 +208,12 @@ describe("browser inference worker JPEG model input", () => {
     vi.unstubAllGlobals();
   });
 
-  it("passes the encoded crop JPEG Blob directly to RawImage.fromBlob", async () => {
-    const encodedJpeg = new Blob(["jpeg"], { type: "image/jpeg" });
+  it("passes the resized crop pixels directly to RawImage", async () => {
     const config = { ...INFERENCE_CONFIG, cropPadding: 0.25, imageSide: 2 };
 
-    FakeOffscreenCanvas.encodedBlob = encodedJpeg;
     FakeOffscreenCanvas.instances = [];
     workerMocks.model = createModel();
     workerMocks.processor = createProcessor();
-    workerMocks.rawImageFromBlob.mockResolvedValue({ height: 2, width: 2 });
 
     const preparationProgress = vi.fn();
 
@@ -235,16 +226,67 @@ describe("browser inference worker JPEG model input", () => {
       region: { x1: 0.25, y1: 0.25, x2: 0.75, y2: 0.75 },
     });
 
-    expect(workerMocks.rawImageFromBlob).toHaveBeenCalledWith(encodedJpeg);
+    expect(workerMocks.rawImageConstructor).toHaveBeenCalledWith(decodedRgba, 2, 2, 4);
     expect(result).toMatchObject({
       label: "cat",
-      performance: { encodedJpegBytes: 4 },
+      generation: {
+        tokens: [{ id: 42, text: "cat", logprob: -0.1, probability: 0.904837 }],
+        processor: {
+          tensors: {
+            pixel_values: {
+              shape: [1, 3, 2, 2],
+              dtype: "float32",
+              mean: 2.5,
+              standard_deviation: 1.118034,
+              first_values: [1, 2, 3, 4],
+            },
+          },
+        },
+      },
     });
-    expect(result.crop).not.toHaveProperty("encodedJpegBytes");
     expect(result.generation).not.toHaveProperty("engineTimings");
     expect(result.generation.processor).not.toHaveProperty("processor_warnings");
     for (const [event] of preparationProgress.mock.calls)
       expect(event.detail?.processor_warnings).toBeUndefined();
+  });
+
+  it("restores model tensor hooks when generation fails", async () => {
+    const config = { ...INFERENCE_CONFIG, cropPadding: 0.25, imageSide: 2 };
+    const model = createModel() as Record<string, unknown> & {
+      encode_text?: (inputs: Record<string, unknown>) => Promise<unknown>;
+      encode_image?: (inputs: Record<string, unknown>) => Promise<unknown>;
+      generate?: () => Promise<unknown>;
+    };
+    const originalEncodeText = vi.fn(async () => ({ dims: [1, 2], type: "float32", data: [1, 2] }));
+    const originalEncodeImage = vi.fn(async () => ({
+      dims: [1, 2],
+      type: "float32",
+      data: [3, 4],
+    }));
+
+    model.encode_text = originalEncodeText;
+    model.encode_image = originalEncodeImage;
+    model.generate = vi.fn(async () => {
+      await model.encode_text?.({});
+      await model.encode_image?.({});
+      throw new Error("generation failed");
+    });
+    workerMocks.model = model;
+    workerMocks.processor = createProcessor();
+
+    await api.prepare(config, false);
+    await api.loadImage(descriptor, new Uint8Array([0xff, 0xd8, 0xff]).buffer, config);
+    await expect(
+      api.classify({
+        config,
+        imageId: descriptor.id,
+        jobId: 99,
+        region: { x1: 0.25, y1: 0.25, x2: 0.75, y2: 0.75 },
+      })
+    ).rejects.toThrow("generation failed");
+
+    expect(model.encode_text).toBe(originalEncodeText);
+    expect(model.encode_image).toBe(originalEncodeImage);
   });
 
   it("throws a configuration error when processor controls do not match", async () => {
@@ -317,6 +359,51 @@ describe("browser inference worker JPEG model input", () => {
         model: { ...INFERENCE_CONFIG.model, artifacts: [artifact], revision: "alternate" },
       })
     ).resolves.toMatchObject({ storage: { download: 7 } });
+  });
+
+  it("reports aggregate model download progress", async () => {
+    workerMocks.model = createModel();
+    workerMocks.processor = createProcessor();
+    workerMocks.modelFromPretrained.mockImplementation(async (_repository, options) => {
+      options.progress_callback({
+        status: "progress_total",
+        loaded: 250_000_000,
+        total: 500_000_000,
+      });
+      options.progress_callback({
+        status: "progress_total",
+        loaded: 300_000_000,
+        total: 500_000_000,
+      });
+      options.progress_callback({
+        status: "progress_total",
+        loaded: 500_000_000,
+        total: 500_000_000,
+      });
+
+      return workerMocks.model;
+    });
+    const onProgress = vi.fn();
+
+    await api.prepare(INFERENCE_CONFIG, false, onProgress);
+
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "install",
+        message: "Downloading model files: 250 / 500 MB",
+        progress: 50,
+        detail: { loaded: 250_000_000, total: 500_000_000 },
+      })
+    );
+    expect(onProgress).not.toHaveBeenCalledWith(
+      expect.objectContaining({ detail: { loaded: 300_000_000, total: 500_000_000 } })
+    );
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        progress: 80,
+        detail: { loaded: 500_000_000, total: 500_000_000 },
+      })
+    );
   });
 
   it("uses FP32 embedding and Q8 model artifacts without shader-f16", async () => {
